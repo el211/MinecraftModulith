@@ -62,3 +62,67 @@ or only on one named API:
     dependencies = "economy::payments"
 )
 ```
+
+`ModuleServices.require(...)` enforces the same dependency rule at runtime.
+
+## Compile-time boundary enforcement
+
+Add the processor:
+
+```kotlin
+dependencies {
+    implementation("dev.oreo.modulith:modulith-paper:0.2.0-SNAPSHOT")
+    annotationProcessor("dev.oreo.modulith:modulith-processor:0.2.0-SNAPSHOT")
+}
+```
+
+The processor rejects:
+
+- duplicate/missing module IDs
+- invalid dependency selectors
+- access to another module without a declared dependency
+- access to another module type that is not marked `@ModuleApi`
+- access to packages under another module's `internal` package
+- non-public or invalid `@ModuleApi` declarations
+
+Example failure:
+
+```text
+Module 'homes' cannot access internal type
+dev.example.economy.internal.EconomyRepository
+from module 'economy'
+```
+
+## Module events
+
+Synchronous listener:
+
+```java
+@ModuleListener
+public void onHomeCreated(HomeCreatedEvent event) {
+}
+```
+
+Async listener:
+
+```java
+@ModuleListener(
+    id = "rewards.home-created",
+    delivery = EventDelivery.ASYNC
+)
+public CompletionStage<Void> onHomeCreated(HomeCreatedEvent event) {
+    return CompletableFuture.runAsync(() -> reward(event.playerId()));
+}
+```
+
+Publishing supports three completion policies:
+
+```java
+context.events().publish(event, EventCompletionPolicy.WAIT_FOR_ALL);
+context.events().publish(event, EventCompletionPolicy.FAIL_FAST);
+context.events().publish(event, EventCompletionPolicy.FIRE_AND_FORGET);
+```
+
+`publishAsync(...)` returns a `CompletionStage<EventDispatchResult>`.
+
+## Persistent event publication registry
