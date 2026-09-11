@@ -126,3 +126,67 @@ context.events().publish(event, EventCompletionPolicy.FIRE_AND_FORGET);
 `publishAsync(...)` returns a `CompletionStage<EventDispatchResult>`.
 
 ## Persistent event publication registry
+
+`modulith-events-sqlite` tracks one durable publication row per listener delivery.
+
+```java
+var registry = new SqliteEventPublicationRegistry(
+    plugin.getDataFolder().toPath().resolve("modulith-events.db")
+);
+
+modulith = PaperModulith.builder(plugin)
+    .basePackage("dev.example.plugin")
+    .publicationRegistry(registry)
+    .start();
+```
+
+The registry stores:
+
+- publication UUID
+- event type
+- listener ID
+- serialized payload
+- `PENDING`, `COMPLETED`, or `FAILED`
+- publication/completion timestamps
+- failure text
+
+Incomplete publications can be queried with `registry.incomplete()`.
+
+The bundled default serializer uses `toString()`. Plugins can provide a JSON serializer through `eventSerializer(...)`.
+
+## Optional module configuration
+
+Opt in from the module declaration:
+
+```java
+@PluginModule(
+    value = "homes",
+    configuration = true
+)
+public final class HomesModule implements MinecraftModule {
+    @Override
+    public void enable(ModuleContext context) {
+        String command = context.config()
+            .getString("command-name", "home");
+    }
+}
+```
+
+On Paper the default provider uses:
+
+```text
+plugins/<YourPlugin>/modules/homes.yml
+```
+
+If `modules/homes.yml` exists inside the plugin JAR it is copied as the default.
+
+Custom platforms can provide their own `ModuleConfigurationProvider`.
+
+## Paper/Folia scheduling
+
+Use the scheduler-safe API:
+
+```java
+PaperPlatform paper = context.platform(PaperPlatform.class);
+
+paper.schedule(context, this::tick);
