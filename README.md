@@ -190,3 +190,67 @@ Use the scheduler-safe API:
 PaperPlatform paper = context.platform(PaperPlatform.class);
 
 paper.schedule(context, this::tick);
+paper.scheduleLater(context, this::later, 20L);
+paper.scheduleTimer(context, this::tick, 0L, 20L);
+```
+
+MinecraftModulith detects Folia's global region scheduler at runtime and uses it when present. On standard Paper it uses `BukkitScheduler`.
+
+Scheduled work is cancelled automatically when the owning module stops.
+
+## Module-owned commands
+
+Commands can be registered without `plugin.yml` command entries:
+
+```java
+paper.registerCommand(
+    context,
+    "home",
+    "Create a home",
+    (sender, command, label, args) -> {
+        return true;
+    }
+);
+```
+
+The command is unregistered automatically with the module lifecycle.
+
+## Dependency graph export
+
+```java
+String mermaid = modulith.runtime().graphMermaid();
+String dot = modulith.runtime().graphGraphviz();
+```
+
+Example Mermaid output:
+
+```mermaid
+graph TD
+  m_economy["economy"]
+  m_homes["homes"]
+  m_rewards["rewards"]
+  m_homes -->|payments| m_economy
+  m_rewards -->|events| m_homes
+```
+
+## Metrics and diagnostics
+
+```java
+RuntimeDiagnostics diagnostics = modulith.runtime().diagnostics();
+```
+
+The snapshot contains:
+
+- current module states
+- deterministic startup order
+- published service count
+- incomplete persistent event count
+- per-module startup duration
+- module start/stop counters
+- event publication count
+- listener invocation/completion/failure counters
+- total listener execution time
+
+No external metrics system is required, so plugins can bridge this snapshot to Prometheus, Micrometer, a web panel, or their own telemetry.
+
+## Module-focused tests
