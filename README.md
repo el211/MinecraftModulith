@@ -254,3 +254,67 @@ The snapshot contains:
 No external metrics system is required, so plugins can bridge this snapshot to Prometheus, Micrometer, a web panel, or their own telemetry.
 
 ## Module-focused tests
+
+```java
+try (ModuleTestHarness harness = ModuleTestHarness.builder()
+        .modules(List.of(EconomyModule.class, HomesModule.class))
+        .target("homes")
+        .start()) {
+
+    harness
+        .assertRunning("economy")
+        .assertRunning("homes")
+        .assertStartupOrder("economy", "homes");
+}
+```
+
+Only the target and its transitive dependencies are started.
+
+Additional helpers:
+
+```java
+ModuleAssertions.assertValidArchitecture(modules);
+ModuleAssertions.assertMermaidContains(runtime, "homes");
+```
+
+## Paper bootstrap
+
+```java
+public final class MyPlugin extends JavaPlugin {
+    private PaperModulith modulith;
+
+    @Override
+    public void onEnable() {
+        modulith = PaperModulith.builder(this)
+            .basePackage("dev.example.myplugin")
+            .start();
+    }
+
+    @Override
+    public void onDisable() {
+        if (modulith != null) {
+            modulith.close();
+        }
+    }
+}
+```
+
+## Build
+
+Java 21 is the baseline.
+
+```bash
+gradle clean build
+```
+
+The default Paper API property is:
+
+```properties
+paperApiVersion=1.21.8-R0.1-SNAPSHOT
+```
+
+The current SQLite JDBC dependency is `org.xerial:sqlite-jdbc:3.53.4.0`.
+
+## License
+
+MIT
