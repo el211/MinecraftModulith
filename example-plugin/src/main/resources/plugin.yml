@@ -1,0 +1,6 @@
+name: MinecraftModulithExample
+version: 0.2.0
+main: dev.oreo.modulith.example.ExamplePlugin
+api-version: '1.21'
+author: Oreo Studios
+description: Example plugin for MinecraftModulith
