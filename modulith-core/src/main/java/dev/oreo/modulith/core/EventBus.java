@@ -223,3 +223,77 @@ public final class EventBus {
 
         UUID publicationId = publication.id();
         return future.whenComplete((ignored, error) -> {
+            long elapsed = System.nanoTime() - startedAt;
+            if (error == null) {
+                registry.complete(publicationId);
+                metrics.listenerCompleted(elapsed);
+            } else {
+                Throwable cause = unwrap(error);
+                registry.fail(publicationId, cause.toString());
+                metrics.listenerFailed(elapsed);
+            }
+        });
+    }
+
+    private List<Handler> matchingHandlers(Class<?> actualType) {
+        List<Handler> matching = new ArrayList<>();
+        handlers.forEach((registeredType, registeredHandlers) -> {
+            if (registeredType.isAssignableFrom(actualType)) {
+                matching.addAll(registeredHandlers);
+            }
+        });
+        return matching;
+    }
+
+    private static List<Throwable> collectFailures(List<CompletableFuture<Void>> futures) {
+        List<Throwable> failures = new ArrayList<>();
+        for (CompletableFuture<Void> future : futures) {
+            try {
+                future.join();
+            } catch (CompletionException exception) {
+                failures.add(unwrap(exception));
+            }
+        }
+        return List.copyOf(failures);
+    }
+
+    private static CompletionStage<Void> invoke(Object listener, Method method, Object event) {
+        try {
+            Object result = method.invoke(listener, event);
+            if (result instanceof CompletionStage<?> stage) {
+                return stage.thenApply(ignored -> null);
+            }
+            return CompletableFuture.completedFuture(null);
+        } catch (IllegalAccessException exception) {
+            throw new ModulithException("Cannot invoke module listener " + method, exception);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new ModulithException("Module listener failed: " + method, cause);
+        }
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while ((current instanceof CompletionException || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    public interface Subscription extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    @FunctionalInterface
+    private interface Invocation {
+        CompletionStage<Void> invoke(Object event);
+    }
+
+    private record Handler(String id, EventDelivery delivery, Invocation invocation) {
+    }
+}
