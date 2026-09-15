@@ -148,3 +148,78 @@ public final class EventBus {
 
         if (policy == EventCompletionPolicy.FAIL_FAST) {
             return failFast(event.getClass().getName(), futures);
+        }
+
+        CompletableFuture<Void> all = CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
+        return all.handle((ignored, thrown) -> {
+            List<Throwable> failures = collectFailures(futures);
+            if (!failures.isEmpty()) {
+                throw new CompletionException(new EventDispatchException(
+                        "Event " + event.getClass().getName() + " failed in " + failures.size() + " listener(s)",
+                        failures
+                ));
+            }
+            return new EventDispatchResult(
+                    event.getClass().getName(),
+                    matching.size(),
+                    matching.size(),
+                    List.of(),
+                    false
+            );
+        });
+    }
+
+    private CompletionStage<EventDispatchResult> failFast(
+            String eventType,
+            List<CompletableFuture<Void>> futures
+    ) {
+        CompletableFuture<EventDispatchResult> result = new CompletableFuture<>();
+        AtomicInteger completed = new AtomicInteger();
+
+        for (CompletableFuture<Void> future : futures) {
+            future.whenComplete((ignored, error) -> {
+                if (error != null) {
+                    Throwable cause = unwrap(error);
+                    result.completeExceptionally(new EventDispatchException(
+                            "Event " + eventType + " failed before all listeners completed",
+                            List.of(cause)
+                    ));
+                    return;
+                }
+
+                int count = completed.incrementAndGet();
+                if (count == futures.size()) {
+                    result.complete(new EventDispatchResult(
+                            eventType,
+                            futures.size(),
+                            futures.size(),
+                            List.of(),
+                            false
+                    ));
+                }
+            });
+        }
+        return result;
+    }
+
+    private CompletableFuture<Void> dispatch(Handler handler, Object event) {
+        String payload = serializer.serialize(event);
+        EventPublication publication = registry.begin(event.getClass().getName(), handler.id(), payload);
+        metrics.listenerInvoked();
+        long startedAt = System.nanoTime();
+
+        CompletableFuture<Void> future;
+        if (handler.delivery() == EventDelivery.ASYNC) {
+            future = CompletableFuture.supplyAsync(() -> handler.invocation().invoke(event), executor)
+                    .thenCompose(stage -> stage)
+                    .toCompletableFuture();
+        } else {
+            try {
+                future = handler.invocation().invoke(event).toCompletableFuture();
+            } catch (RuntimeException exception) {
+                future = CompletableFuture.failedFuture(exception);
+            }
+        }
+
+        UUID publicationId = publication.id();
+        return future.whenComplete((ignored, error) -> {
