@@ -73,3 +73,78 @@ public final class EventBus {
     }
 
     public List<Subscription> register(Object listener) {
+        Objects.requireNonNull(listener, "listener");
+        List<Subscription> subscriptions = new ArrayList<>();
+
+        for (Method method : listener.getClass().getDeclaredMethods()) {
+            ModuleListener annotation = method.getAnnotation(ModuleListener.class);
+            if (annotation == null) {
+                continue;
+            }
+            if (method.getParameterCount() != 1) {
+                throw new ModulithException("@ModuleListener method must have exactly one parameter: " + method);
+            }
+
+            method.setAccessible(true);
+            Class<?> eventType = method.getParameterTypes()[0];
+            String listenerId = annotation.id().isBlank()
+                    ? listener.getClass().getName() + "#" + method.getName() + "(" + eventType.getName() + ")"
+                    : annotation.id();
+
+            Handler handler = new Handler(
+                    listenerId,
+                    annotation.delivery(),
+                    event -> invoke(listener, method, event)
+            );
+            handlers.computeIfAbsent(eventType, ignored -> new CopyOnWriteArrayList<>()).add(handler);
+            subscriptions.add(() -> handlers.getOrDefault(eventType, new CopyOnWriteArrayList<>()).remove(handler));
+        }
+
+        return List.copyOf(subscriptions);
+    }
+
+    public EventDispatchResult publish(Object event) {
+        return publish(event, EventCompletionPolicy.WAIT_FOR_ALL);
+    }
+
+    public EventDispatchResult publish(Object event, EventCompletionPolicy policy) {
+        try {
+            return publishAsync(event, policy).toCompletableFuture().join();
+        } catch (CompletionException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw exception;
+        }
+    }
+
+    public CompletionStage<EventDispatchResult> publishAsync(Object event) {
+        return publishAsync(event, EventCompletionPolicy.WAIT_FOR_ALL);
+    }
+
+    public CompletionStage<EventDispatchResult> publishAsync(Object event, EventCompletionPolicy policy) {
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(policy, "policy");
+        metrics.eventPublished();
+
+        List<Handler> matching = matchingHandlers(event.getClass());
+        if (matching.isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    new EventDispatchResult(event.getClass().getName(), 0, 0, List.of(), false)
+            );
+        }
+
+        List<CompletableFuture<Void>> futures = new ArrayList<>(matching.size());
+        for (Handler handler : matching) {
+            futures.add(dispatch(handler, event));
+        }
+
+        if (policy == EventCompletionPolicy.FIRE_AND_FORGET) {
+            return CompletableFuture.completedFuture(
+                    new EventDispatchResult(event.getClass().getName(), matching.size(), 0, List.of(), true)
+            );
+        }
+
+        if (policy == EventCompletionPolicy.FAIL_FAST) {
+            return failFast(event.getClass().getName(), futures);
