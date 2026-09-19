@@ -67,3 +67,72 @@ public final class ModuleRuntime implements AutoCloseable {
             for (ModuleDescriptor descriptor : startupOrder) {
                 startOne(descriptor);
             }
+            started = true;
+            return this;
+        } catch (RuntimeException exception) {
+            stopStartedModules();
+            throw exception;
+        }
+    }
+
+    private void startOne(ModuleDescriptor descriptor) {
+        states.put(descriptor.id(), ModuleState.STARTING);
+        LifecycleScope lifecycle = new LifecycleScope();
+        MinecraftModule instance = instantiate(descriptor);
+        ModuleServices moduleServices = new ModuleServices(
+                descriptor.id(),
+                descriptor.parsedDependencies(),
+                services
+        );
+        ModuleConfiguration configuration = descriptor.configurationEnabled()
+                ? Objects.requireNonNull(configurationProvider.load(descriptor), "configurationProvider returned null")
+                : ModuleConfiguration.empty();
+
+        ModuleContext context = new ModuleContext(
+                descriptor.id(),
+                moduleServices,
+                eventBus,
+                lifecycle,
+                configuration,
+                platformServices,
+                Logger.getLogger(logger.getName() + "." + descriptor.id())
+        );
+
+        long startedAt = System.nanoTime();
+        try {
+            instance.enable(context);
+            running.put(descriptor.id(), new RunningModule(descriptor, instance, lifecycle, configuration));
+            states.put(descriptor.id(), ModuleState.RUNNING);
+            metrics.moduleStarted(descriptor.id(), System.nanoTime() - startedAt);
+            logger.info(() -> "[MinecraftModulith] Started module '" + descriptor.id() + "'");
+        } catch (Exception exception) {
+            states.put(descriptor.id(), ModuleState.FAILED);
+            try {
+                lifecycle.close();
+            } catch (RuntimeException cleanupFailure) {
+                exception.addSuppressed(cleanupFailure);
+            }
+            throw new ModulithException("Failed to start module '" + descriptor.id() + "'", exception);
+        }
+    }
+
+    private static MinecraftModule instantiate(ModuleDescriptor descriptor) {
+        try {
+            Constructor<? extends MinecraftModule> constructor = descriptor.implementation().getDeclaredConstructor();
+            constructor.setAccessible(true);
+            return constructor.newInstance();
+        } catch (NoSuchMethodException exception) {
+            throw new ModulithException(
+                    "Module '" + descriptor.id() + "' must expose a no-argument constructor: "
+                            + descriptor.implementation().getName(), exception
+            );
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException exception) {
+            throw new ModulithException("Cannot instantiate module '" + descriptor.id() + "'", exception);
+        }
+    }
+
+    public synchronized void stop() {
+        if (!started && running.isEmpty()) {
+            return;
+        }
+        stopStartedModules();
