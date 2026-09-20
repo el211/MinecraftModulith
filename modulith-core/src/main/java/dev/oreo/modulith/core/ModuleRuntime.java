@@ -274,3 +274,69 @@ public final class ModuleRuntime implements AutoCloseable {
             this.logger = Objects.requireNonNull(logger, "logger");
             return this;
         }
+
+        public Builder eventExecutor(Executor eventExecutor) {
+            this.eventExecutor = Objects.requireNonNull(eventExecutor, "eventExecutor");
+            return this;
+        }
+
+        public Builder publicationRegistry(EventPublicationRegistry publicationRegistry) {
+            this.publicationRegistry = Objects.requireNonNull(publicationRegistry, "publicationRegistry");
+            return this;
+        }
+
+        public Builder eventSerializer(EventPayloadSerializer eventSerializer) {
+            this.eventSerializer = Objects.requireNonNull(eventSerializer, "eventSerializer");
+            return this;
+        }
+
+        public Builder configurationProvider(ModuleConfigurationProvider configurationProvider) {
+            this.configurationProvider = Objects.requireNonNull(configurationProvider, "configurationProvider");
+            return this;
+        }
+
+        public Builder metrics(ModulithMetrics metrics) {
+            this.metrics = Objects.requireNonNull(metrics, "metrics");
+            return this;
+        }
+
+        public ModuleRuntime build() {
+            List<ModuleDescriptor> descriptors = moduleTypes.stream().map(Builder::describe).toList();
+            return new ModuleRuntime(
+                    ModuleGraph.validateAndSort(descriptors),
+                    platformServices,
+                    logger,
+                    eventExecutor,
+                    publicationRegistry,
+                    eventSerializer,
+                    configurationProvider,
+                    metrics
+            );
+        }
+
+        public ModuleRuntime start() {
+            return build().start();
+        }
+
+        public static ModuleDescriptor describe(Class<? extends MinecraftModule> type) {
+            PluginModule annotation = type.getAnnotation(PluginModule.class);
+            if (annotation == null) {
+                throw new ModulithException("Module class is missing @PluginModule: " + type.getName());
+            }
+            return new ModuleDescriptor(
+                    annotation.value(),
+                    List.of(annotation.dependencies()),
+                    type,
+                    annotation.configuration()
+            );
+        }
+    }
+
+    private record RunningModule(
+            ModuleDescriptor descriptor,
+            MinecraftModule instance,
+            LifecycleScope lifecycle,
+            ModuleConfiguration configuration
+    ) {
+    }
+}
