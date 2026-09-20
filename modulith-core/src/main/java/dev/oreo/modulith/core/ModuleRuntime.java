@@ -205,3 +205,72 @@ public final class ModuleRuntime implements AutoCloseable {
         return eventBus;
     }
 
+    public ModulithMetrics metrics() {
+        return metrics;
+    }
+
+    public RuntimeDiagnostics diagnostics() {
+        long incomplete;
+        try {
+            incomplete = publicationRegistry.incompleteCount();
+        } catch (RuntimeException exception) {
+            logger.log(Level.WARNING, "[MinecraftModulith] Could not read incomplete publications", exception);
+            incomplete = -1;
+        }
+
+        return new RuntimeDiagnostics(
+                states,
+                startupOrder.stream().map(ModuleDescriptor::id).toList(),
+                services.size(),
+                incomplete,
+                metrics.snapshot()
+        );
+    }
+
+    public String graphMermaid() {
+        return ModuleGraphExporter.toMermaid(startupOrder);
+    }
+
+    public String graphGraphviz() {
+        return ModuleGraphExporter.toGraphviz(startupOrder);
+    }
+
+    @Override
+    public void close() {
+        stop();
+    }
+
+    public static final class Builder {
+        private final Set<Class<? extends MinecraftModule>> moduleTypes = new LinkedHashSet<>();
+        private final Map<Class<?>, Object> platformServices = new LinkedHashMap<>();
+        private Logger logger = Logger.getLogger("MinecraftModulith");
+        private Executor eventExecutor = ForkJoinPool.commonPool();
+        private EventPublicationRegistry publicationRegistry = EventPublicationRegistry.noop();
+        private EventPayloadSerializer eventSerializer = EventPayloadSerializer.toStringSerializer();
+        private ModuleConfigurationProvider configurationProvider = ModuleConfigurationProvider.none();
+        private ModulithMetrics metrics = new ModulithMetrics();
+
+        public Builder module(Class<? extends MinecraftModule> moduleType) {
+            moduleTypes.add(Objects.requireNonNull(moduleType, "moduleType"));
+            return this;
+        }
+
+        public Builder modules(Collection<Class<? extends MinecraftModule>> moduleTypes) {
+            moduleTypes.forEach(this::module);
+            return this;
+        }
+
+        public <T> Builder platformService(Class<T> type, T service) {
+            Objects.requireNonNull(type, "type");
+            Objects.requireNonNull(service, "service");
+            if (!type.isInstance(service)) {
+                throw new IllegalArgumentException(service.getClass().getName() + " is not a " + type.getName());
+            }
+            platformServices.put(type, service);
+            return this;
+        }
+
+        public Builder logger(Logger logger) {
+            this.logger = Objects.requireNonNull(logger, "logger");
+            return this;
+        }
