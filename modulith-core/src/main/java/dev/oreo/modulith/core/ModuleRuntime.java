@@ -136,3 +136,72 @@ public final class ModuleRuntime implements AutoCloseable {
             return;
         }
         stopStartedModules();
+        started = false;
+    }
+
+    private void stopStartedModules() {
+        List<RunningModule> modules = new ArrayList<>(running.values());
+        Collections.reverse(modules);
+        RuntimeException first = null;
+
+        for (RunningModule module : modules) {
+            states.put(module.descriptor.id(), ModuleState.STOPPING);
+            try {
+                module.instance.disable();
+            } catch (Exception exception) {
+                logger.log(Level.SEVERE,
+                        "[MinecraftModulith] Module disable failed: " + module.descriptor.id(), exception);
+                first = append(first, new ModulithException(
+                        "Failed to disable module '" + module.descriptor.id() + "'", exception
+                ));
+            }
+
+            try {
+                if (module.descriptor.configurationEnabled()) {
+                    module.configuration.save();
+                }
+            } catch (RuntimeException exception) {
+                logger.log(Level.SEVERE,
+                        "[MinecraftModulith] Module configuration save failed: " + module.descriptor.id(), exception);
+                first = append(first, exception);
+            }
+
+            try {
+                module.lifecycle.close();
+            } catch (RuntimeException exception) {
+                logger.log(Level.SEVERE,
+                        "[MinecraftModulith] Module cleanup failed: " + module.descriptor.id(), exception);
+                first = append(first, exception);
+            }
+
+            metrics.moduleStopped(module.descriptor.id());
+            states.put(module.descriptor.id(), ModuleState.STOPPED);
+        }
+
+        running.clear();
+        services.clear();
+        if (first != null) {
+            throw first;
+        }
+    }
+
+    private static RuntimeException append(RuntimeException first, RuntimeException next) {
+        if (first == null) {
+            return next;
+        }
+        first.addSuppressed(next);
+        return first;
+    }
+
+    public List<ModuleDescriptor> modules() {
+        return startupOrder;
+    }
+
+    public Map<String, ModuleState> states() {
+        return Map.copyOf(states);
+    }
+
+    public EventBus events() {
+        return eventBus;
+    }
+
