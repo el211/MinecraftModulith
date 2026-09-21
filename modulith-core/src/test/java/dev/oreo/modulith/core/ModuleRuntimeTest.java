@@ -49,3 +49,54 @@ class ModuleRuntimeTest {
         assertTrue(runtime.graphMermaid().contains("|payments|"));
         runtime.close();
     }
+
+    @PluginModule("economy")
+    static final class Economy implements MinecraftModule, PaymentsApi {
+        @Override
+        public void enable(ModuleContext context) {
+            ORDER.add("economy:on");
+            context.services().publish(PaymentsApi.class, this);
+        }
+
+        @Override
+        public void disable() {
+            ORDER.add("economy:off");
+        }
+    }
+
+    @ModuleApi("payments")
+    interface PaymentsApi {
+        default int balance() {
+            return 42;
+        }
+    }
+
+    @PluginModule(value = "homes", dependencies = "economy")
+    static final class Homes implements MinecraftModule {
+        @Override
+        public void enable(ModuleContext context) {
+            ORDER.add("homes:on");
+        }
+
+        @Override
+        public void disable() {
+            ORDER.add("homes:off");
+        }
+    }
+
+    @PluginModule(value = "payments-consumer", dependencies = "economy::payments")
+    static final class PaymentsConsumer implements MinecraftModule {
+        @Override
+        public void enable(ModuleContext context) {
+            assertEquals(42, context.services().require(PaymentsApi.class).balance());
+        }
+    }
+
+    @PluginModule(value = "a", dependencies = "b")
+    static final class CycleA implements MinecraftModule {
+    }
+
+    @PluginModule(value = "b", dependencies = "a")
+    static final class CycleB implements MinecraftModule {
+    }
+}
