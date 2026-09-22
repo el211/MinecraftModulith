@@ -144,3 +144,75 @@ public final class SqliteEventPublicationRegistry implements EventPublicationReg
                 while (result.next()) {
                     publications.add(read(result));
                 }
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query incomplete event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public List<EventPublication> all() {
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication
+                ORDER BY published_at ASC
+                """);
+             ResultSet result = statement.executeQuery()) {
+            List<EventPublication> publications = new ArrayList<>();
+            while (result.next()) {
+                publications.add(read(result));
+            }
+            return List.copyOf(publications);
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int deleteCompletedBefore(Instant cutoff) {
+        Objects.requireNonNull(cutoff, "cutoff");
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                DELETE FROM modulith_event_publication
+                WHERE status = ? AND completed_at IS NOT NULL AND completed_at < ?
+                """)) {
+            statement.setString(1, EventPublicationStatus.COMPLETED.name());
+            statement.setString(2, cutoff.toString());
+            return statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not prune completed event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static EventPublication read(ResultSet result) throws SQLException {
+        String completedAt = result.getString("completed_at");
+        return new EventPublication(
+                UUID.fromString(result.getString("id")),
+                result.getString("event_type"),
+                result.getString("listener_id"),
+                result.getString("payload"),
+                EventPublicationStatus.valueOf(result.getString("status")),
+                Instant.parse(result.getString("published_at")),
+                completedAt == null ? null : Instant.parse(completedAt),
+                result.getString("error")
+        );
+    }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            connection.close();
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not close SQLite event publication registry", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+}
