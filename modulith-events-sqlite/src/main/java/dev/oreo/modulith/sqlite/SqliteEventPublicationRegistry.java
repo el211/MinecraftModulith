@@ -71,3 +71,76 @@ public final class SqliteEventPublicationRegistry implements EventPublicationReg
         Instant now = Instant.now();
 
         lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO modulith_event_publication
+                    (id, event_type, listener_id, payload, status, published_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """)) {
+            statement.setString(1, id.toString());
+            statement.setString(2, eventType);
+            statement.setString(3, listenerId);
+            statement.setString(4, payload);
+            statement.setString(5, EventPublicationStatus.PENDING.name());
+            statement.setString(6, now.toString());
+            statement.executeUpdate();
+            return new EventPublication(
+                    id,
+                    eventType,
+                    listenerId,
+                    payload,
+                    EventPublicationStatus.PENDING,
+                    now,
+                    null,
+                    null
+            );
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not persist event publication", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void complete(UUID publicationId) {
+        update(publicationId, EventPublicationStatus.COMPLETED, null);
+    }
+
+    @Override
+    public void fail(UUID publicationId, String error) {
+        update(publicationId, EventPublicationStatus.FAILED, error);
+    }
+
+    private void update(UUID publicationId, EventPublicationStatus status, String error) {
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE modulith_event_publication
+                SET status = ?, completed_at = ?, error = ?
+                WHERE id = ?
+                """)) {
+            statement.setString(1, status.name());
+            statement.setString(2, Instant.now().toString());
+            statement.setString(3, error);
+            statement.setString(4, publicationId.toString());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not update event publication " + publicationId, exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public List<EventPublication> incomplete() {
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication
+                WHERE status = ?
+                ORDER BY published_at ASC
+                """)) {
+            statement.setString(1, EventPublicationStatus.PENDING.name());
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) {
+                    publications.add(read(result));
+                }
