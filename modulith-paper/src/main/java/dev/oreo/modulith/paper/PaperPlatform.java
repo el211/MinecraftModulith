@@ -97,3 +97,102 @@ public final class PaperPlatform {
     public CommandRegistration registerCommand(
             ModuleContext context,
             String name,
+            String description,
+            CommandExecutor executor
+    ) {
+        return registerCommand(context, name, description, executor, null);
+    }
+
+    public CommandRegistration registerCommand(
+            ModuleContext context,
+            String name,
+            String description,
+            CommandExecutor executor,
+            TabCompleter tabCompleter
+    ) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(executor, "executor");
+
+        try {
+            Constructor<PluginCommand> constructor = PluginCommand.class
+                    .getDeclaredConstructor(String.class, Plugin.class);
+            constructor.setAccessible(true);
+            PluginCommand command = constructor.newInstance(name, plugin);
+            command.setDescription(description == null ? "" : description);
+            command.setExecutor(executor);
+            if (tabCompleter != null) {
+                command.setTabCompleter(tabCompleter);
+            }
+
+            Object commandMap = resolveCommandMap();
+            Method register = findMethod(commandMap.getClass(), "register", 2);
+            register.invoke(commandMap, plugin.getName().toLowerCase(), command);
+
+            CommandRegistration registration = new CommandRegistration(
+                    command,
+                    () -> unregisterCommand(commandMap, command)
+            );
+            context.lifecycle().onClose(registration::close);
+            return registration;
+        } catch (ReflectiveOperationException exception) {
+            throw new ModulithException("Could not dynamically register command '/" + name + "'", exception);
+        }
+    }
+
+    private Object resolveCommandMap() throws ReflectiveOperationException {
+        Method method = findMethod(plugin.getServer().getClass(), "getCommandMap", 0);
+        return method.invoke(plugin.getServer());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void unregisterCommand(Object commandMap, PluginCommand command) {
+        try {
+            Method unregister = findMethod(command.getClass(), "unregister", 1);
+            unregister.invoke(command, commandMap);
+
+            Field knownCommands = findField(commandMap.getClass(), "knownCommands");
+            knownCommands.setAccessible(true);
+            Object value = knownCommands.get(commandMap);
+            if (value instanceof Map<?, ?> map) {
+                ((Map<String, Command>) map).entrySet().removeIf(entry -> entry.getValue() == command);
+            }
+        } catch (ReflectiveOperationException exception) {
+            throw new ModulithException("Could not unregister command '/" + command.getName() + "'", exception);
+        }
+    }
+
+    private static Method findMethod(Class<?> type, String name, int parameterCount) {
+        Class<?> current = type;
+        while (current != null) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (method.getName().equals(name) && method.getParameterCount() == parameterCount) {
+                    method.setAccessible(true);
+                    return method;
+                }
+            }
+            current = current.getSuperclass();
+        }
+        throw new ModulithException("Could not find method " + name + " on " + type.getName());
+    }
+
+    private static Field findField(Class<?> type, String name) throws NoSuchFieldException {
+        Class<?> current = type;
+        while (current != null) {
+            try {
+                return current.getDeclaredField(name);
+            } catch (NoSuchFieldException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(name);
+    }
+
+    private void ensurePaperScheduler() {
+        if (scheduler.folia()) {
+            throw new ModulithException(
+                    "BukkitScheduler compatibility methods are unsafe on Folia; use schedule/scheduleLater/scheduleTimer"
+            );
+        }
+    }
+}
