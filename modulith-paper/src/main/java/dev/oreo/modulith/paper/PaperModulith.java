@@ -65,3 +65,70 @@ public final class PaperModulith implements AutoCloseable {
             this.publicationRegistry = Objects.requireNonNull(publicationRegistry, "publicationRegistry");
             return this;
         }
+
+        public Builder eventSerializer(EventPayloadSerializer eventSerializer) {
+            this.eventSerializer = Objects.requireNonNull(eventSerializer, "eventSerializer");
+            return this;
+        }
+
+        public Builder eventExecutor(Executor eventExecutor) {
+            this.eventExecutor = Objects.requireNonNull(eventExecutor, "eventExecutor");
+            return this;
+        }
+
+        public Builder configurationProvider(ModuleConfigurationProvider configurationProvider) {
+            this.configurationProvider = Objects.requireNonNull(configurationProvider, "configurationProvider");
+            return this;
+        }
+
+        public PaperModulith start() {
+            Set<Class<? extends MinecraftModule>> modules = new LinkedHashSet<>(explicitModules);
+            if (basePackage != null && !basePackage.isBlank()) {
+                modules.addAll(discover(basePackage));
+            }
+            if (modules.isEmpty()) {
+                throw new ModulithException("No MinecraftModulith modules were discovered");
+            }
+
+            PaperPlatform paperPlatform = new PaperPlatform(plugin);
+            ModuleConfigurationProvider configs = configurationProvider != null
+                    ? configurationProvider
+                    : new YamlModuleConfigurationProvider(plugin);
+
+            ModuleRuntime runtime = ModuleRuntime.builder()
+                    .modules(modules)
+                    .platformService(JavaPlugin.class, plugin)
+                    .platformService(PaperPlatform.class, paperPlatform)
+                    .platformService(SchedulerAdapter.class, paperPlatform.scheduler())
+                    .publicationRegistry(publicationRegistry)
+                    .eventSerializer(eventSerializer)
+                    .eventExecutor(eventExecutor)
+                    .configurationProvider(configs)
+                    .logger(plugin.getLogger())
+                    .start();
+            return new PaperModulith(runtime);
+        }
+
+        private Set<Class<? extends MinecraftModule>> discover(String packageName) {
+            Set<Class<? extends MinecraftModule>> result = new LinkedHashSet<>();
+            try (ScanResult scan = new ClassGraph()
+                    .overrideClassLoaders(plugin.getClass().getClassLoader())
+                    .acceptPackages(packageName)
+                    .enableClassInfo()
+                    .enableAnnotationInfo()
+                    .scan()) {
+                for (Class<?> candidate : scan.getClassesWithAnnotation(PluginModule.class).loadClasses()) {
+                    if (!MinecraftModule.class.isAssignableFrom(candidate)) {
+                        throw new ModulithException(
+                                "@PluginModule class must implement MinecraftModule: " + candidate.getName()
+                        );
+                    }
+                    @SuppressWarnings("unchecked")
+                    Class<? extends MinecraftModule> moduleType = (Class<? extends MinecraftModule>) candidate;
+                    result.add(moduleType);
+                }
+            }
+            return result;
+        }
+    }
+}
