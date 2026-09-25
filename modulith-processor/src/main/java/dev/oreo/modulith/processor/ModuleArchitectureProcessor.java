@@ -199,3 +199,70 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         while (current != null && !(current instanceof TypeElement)) {
             current = current.getEnclosingElement();
         }
+        return (TypeElement) current;
+    }
+
+    private void validateReference(
+            ModuleInfo sourceModule,
+            List<ModuleInfo> owners,
+            TreePath path
+    ) {
+        Element referenced = trees.getElement(path);
+        if (referenced == null) {
+            return;
+        }
+
+        TypeElement targetType = enclosingType(referenced);
+        if (targetType == null) {
+            return;
+        }
+
+        String targetPackage = processingEnv.getElementUtils()
+                .getPackageOf(targetType)
+                .getQualifiedName()
+                .toString();
+        ModuleInfo targetModule = ownerOf(targetPackage, owners);
+        if (targetModule == null || targetModule.id().equals(sourceModule.id())) {
+            return;
+        }
+
+        String key = sourceModule.id() + "|" + targetType.getQualifiedName() + "|" + path.getLeaf();
+        if (!reported.add(key)) {
+            return;
+        }
+
+        if (targetPackage.equals(targetModule.packageName() + ".internal")
+                || targetPackage.startsWith(targetModule.packageName() + ".internal.")) {
+            errorAt(path, "Module '" + sourceModule.id() + "' cannot access internal type "
+                    + targetType.getQualifiedName() + " from module '" + targetModule.id() + "'");
+            return;
+        }
+
+        ModuleApi api = targetType.getAnnotation(ModuleApi.class);
+        if (api == null) {
+            errorAt(path, "Cross-module reference to " + targetType.getQualifiedName()
+                    + " is not allowed because it is not annotated with @ModuleApi");
+            return;
+        }
+
+        String apiName = api.value().trim();
+        boolean allowed = sourceModule.dependencies().stream().anyMatch(raw -> {
+            if (raw.equals(targetModule.id())) {
+                return true;
+            }
+            return raw.equals(targetModule.id() + "::" + apiName);
+        });
+        if (!allowed) {
+            errorAt(path, "Module '" + sourceModule.id() + "' must declare dependency '"
+                    + targetModule.id() + "' or '" + targetModule.id() + "::" + apiName
+                    + "' to access " + targetType.getQualifiedName());
+        }
+    }
+
+    private void error(Element element, String message) {
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, message, element);
+    }
+
+    private void errorAt(TreePath path, String message) {
+        trees.printMessage(Diagnostic.Kind.ERROR, message, path.getLeaf(), path.getCompilationUnit());
+    }
