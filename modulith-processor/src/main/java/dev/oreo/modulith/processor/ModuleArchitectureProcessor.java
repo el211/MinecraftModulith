@@ -266,3 +266,67 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
     private void errorAt(TreePath path, String message) {
         trees.printMessage(Diagnostic.Kind.ERROR, message, path.getLeaf(), path.getCompilationUnit());
     }
+
+    private void writeMetadata() {
+        if (modulesById.isEmpty()) {
+            return;
+        }
+        try {
+            Filer filer = processingEnv.getFiler();
+            var resource = filer.createResource(
+                    StandardLocation.CLASS_OUTPUT,
+                    "",
+                    "META-INF/minecraft-modulith/modules.idx"
+            );
+            try (Writer writer = resource.openWriter()) {
+                for (ModuleInfo info : modulesById.values()) {
+                    writer.write(info.id());
+                    writer.write("|");
+                    writer.write(info.className());
+                    writer.write("|");
+                    writer.write(String.join(",", info.dependencies()));
+                    writer.write("|");
+                    writer.write(Boolean.toString(info.configuration()));
+                    writer.write(System.lineSeparator());
+                }
+            }
+        } catch (IOException exception) {
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.WARNING,
+                    "Could not write MinecraftModulith module metadata: " + exception.getMessage()
+            );
+        }
+    }
+
+    private final class BoundaryScanner extends TreePathScanner<Void, Void> {
+        private final ModuleInfo sourceModule;
+        private final List<ModuleInfo> owners;
+
+        private BoundaryScanner(ModuleInfo sourceModule, List<ModuleInfo> owners) {
+            this.sourceModule = sourceModule;
+            this.owners = owners;
+        }
+
+        @Override
+        public Void visitIdentifier(IdentifierTree node, Void unused) {
+            validateReference(sourceModule, owners, getCurrentPath());
+            return super.visitIdentifier(node, unused);
+        }
+
+        @Override
+        public Void visitMemberSelect(MemberSelectTree node, Void unused) {
+            validateReference(sourceModule, owners, getCurrentPath());
+            return super.visitMemberSelect(node, unused);
+        }
+    }
+
+    private record ModuleInfo(
+            String id,
+            String packageName,
+            String className,
+            List<String> dependencies,
+            boolean configuration,
+            TypeElement element
+    ) {
+    }
+}
