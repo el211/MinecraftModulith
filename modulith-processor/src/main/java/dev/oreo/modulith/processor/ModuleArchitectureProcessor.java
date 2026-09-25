@@ -132,3 +132,70 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
 
     private void validateDeclaredDependencies() {
         for (ModuleInfo module : modulesById.values()) {
+            for (String raw : module.dependencies()) {
+                String targetId = raw;
+                int delimiter = raw.indexOf("::");
+                if (delimiter >= 0) {
+                    targetId = raw.substring(0, delimiter);
+                    String api = raw.substring(delimiter + 2);
+                    if (api.isBlank()) {
+                        error(module.element(), "Invalid dependency selector '" + raw + "'");
+                    }
+                }
+                if (targetId.isBlank()) {
+                    error(module.element(), "Invalid dependency selector '" + raw + "'");
+                } else if (!modulesById.containsKey(targetId)) {
+                    error(module.element(), "Module '" + module.id() + "' depends on missing module '" + targetId + "'");
+                }
+            }
+        }
+    }
+
+    private void scanRootElements(RoundEnvironment roundEnv) {
+        List<ModuleInfo> owners = modulesByPackage.values().stream()
+                .sorted(Comparator.comparingInt((ModuleInfo info) -> info.packageName().length()).reversed())
+                .toList();
+
+        for (Element root : roundEnv.getRootElements()) {
+            if (!(root instanceof TypeElement sourceType)) {
+                continue;
+            }
+
+            PackageElement sourcePackageElement = processingEnv.getElementUtils().getPackageOf(sourceType);
+            String sourcePackage = sourcePackageElement.getQualifiedName().toString();
+            ModuleInfo sourceModule = ownerOf(sourcePackage, owners);
+            if (sourceModule == null) {
+                continue;
+            }
+
+            TreePath path = trees.getPath(sourceType);
+            if (path == null) {
+                continue;
+            }
+            CompilationUnitTree unit = path.getCompilationUnit();
+            String unitKey = unit.getSourceFile() == null
+                    ? sourceType.getQualifiedName().toString()
+                    : unit.getSourceFile().toUri().toString();
+            if (!scannedUnits.add(unitKey)) {
+                continue;
+            }
+
+            new BoundaryScanner(sourceModule, owners).scan(unit, null);
+        }
+    }
+
+    private ModuleInfo ownerOf(String packageName, List<ModuleInfo> modules) {
+        for (ModuleInfo module : modules) {
+            if (packageName.equals(module.packageName())
+                    || packageName.startsWith(module.packageName() + ".")) {
+                return module;
+            }
+        }
+        return null;
+    }
+
+    private TypeElement enclosingType(Element element) {
+        Element current = element;
+        while (current != null && !(current instanceof TypeElement)) {
+            current = current.getEnclosingElement();
+        }
