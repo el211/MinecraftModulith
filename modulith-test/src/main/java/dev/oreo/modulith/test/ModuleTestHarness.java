@@ -90,3 +90,95 @@ public final class ModuleTestHarness implements AutoCloseable {
 
         public Builder target(String moduleId) {
             this.targetModule = Objects.requireNonNull(moduleId, "moduleId");
+            return this;
+        }
+
+        public <T> Builder platformService(Class<T> type, T service) {
+            platformServices.put(type, service);
+            return this;
+        }
+
+        public Builder eventExecutor(Executor executor) {
+            this.eventExecutor = Objects.requireNonNull(executor, "executor");
+            return this;
+        }
+
+        public Builder publicationRegistry(EventPublicationRegistry registry) {
+            this.registry = Objects.requireNonNull(registry, "registry");
+            return this;
+        }
+
+        public Builder eventSerializer(EventPayloadSerializer serializer) {
+            this.serializer = Objects.requireNonNull(serializer, "serializer");
+            return this;
+        }
+
+        public ModuleTestHarness start() {
+            Collection<Class<? extends MinecraftModule>> selected = targetModule == null
+                    ? moduleTypes
+                    : selectTargetAndDependencies(targetModule, moduleTypes);
+
+            ModuleRuntime.Builder builder = ModuleRuntime.builder()
+                    .modules(selected)
+                    .eventExecutor(eventExecutor)
+                    .publicationRegistry(registry)
+                    .eventSerializer(serializer)
+                    .logger(Logger.getLogger("MinecraftModulithTest"));
+
+            platformServices.forEach((type, service) -> addPlatformService(builder, type, service));
+            return new ModuleTestHarness(builder.start());
+        }
+
+        private static Collection<Class<? extends MinecraftModule>> selectTargetAndDependencies(
+                String target,
+                Collection<Class<? extends MinecraftModule>> moduleTypes
+        ) {
+            Map<String, Class<? extends MinecraftModule>> byId = new LinkedHashMap<>();
+            for (Class<? extends MinecraftModule> type : moduleTypes) {
+                PluginModule annotation = type.getAnnotation(PluginModule.class);
+                if (annotation == null) {
+                    throw new ModulithException("Module class is missing @PluginModule: " + type.getName());
+                }
+                byId.put(annotation.value(), type);
+            }
+            if (!byId.containsKey(target)) {
+                throw new ModulithException("Unknown target module '" + target + "'");
+            }
+
+            LinkedHashSet<Class<? extends MinecraftModule>> selected = new LinkedHashSet<>();
+            collect(target, byId, selected, new LinkedHashSet<>());
+            return selected;
+        }
+
+        private static void collect(
+                String moduleId,
+                Map<String, Class<? extends MinecraftModule>> byId,
+                LinkedHashSet<Class<? extends MinecraftModule>> selected,
+                Set<String> visiting
+        ) {
+            if (selected.stream().anyMatch(type -> type.getAnnotation(PluginModule.class).value().equals(moduleId))) {
+                return;
+            }
+            if (!visiting.add(moduleId)) {
+                throw new ModulithException("Circular dependency while selecting test module '" + moduleId + "'");
+            }
+
+            Class<? extends MinecraftModule> type = byId.get(moduleId);
+            if (type == null) {
+                throw new ModulithException("Missing dependency module '" + moduleId + "'");
+            }
+
+            PluginModule annotation = type.getAnnotation(PluginModule.class);
+            for (String rawDependency : annotation.dependencies()) {
+                collect(ModuleDependency.parse(rawDependency).moduleId(), byId, selected, visiting);
+            }
+            selected.add(type);
+            visiting.remove(moduleId);
+        }
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        private static void addPlatformService(ModuleRuntime.Builder builder, Class type, Object value) {
+            builder.platformService(type, value);
+        }
+    }
+}
