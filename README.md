@@ -4,7 +4,7 @@
 
 MinecraftModulith brings **Spring Modulith-style architecture to Minecraft plugins**: one plugin JAR, explicit internal modules, validated dependency boundaries, named public APIs, module events, deterministic lifecycle ordering, diagnostics, and Paper/Folia lifecycle adapters.
 
-> Current version: **0.2.0**
+> Current version: **0.2.1**
 
 ## Install with JitPack
 
@@ -18,11 +18,11 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.0")
-    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.0")
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.1")
+    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.1")
     // Optional persistent events and test utilities:
-    implementation("com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.2.0")
-    testImplementation("com.github.el211.MinecraftModulith:modulith-test:v0.2.0")
+    implementation("com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.2.1")
+    testImplementation("com.github.el211.MinecraftModulith:modulith-test:v0.2.1")
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
 }
 ```
@@ -30,10 +30,10 @@ dependencies {
 For platform-independent use, depend on `modulith-core` instead of `modulith-paper`.
 Bundle runtime dependencies in your plugin JAR, as the example plugin does.
 
-[JitPack builds](https://jitpack.io/#el211/MinecraftModulith/v0.2.0)
+[JitPack builds](https://jitpack.io/#el211/MinecraftModulith/v0.2.1)
 
 All five library modules are published under `com.github.el211.MinecraftModulith`
-with version `v0.2.0`:
+with version `v0.2.1`:
 
 | Artifact | Purpose |
 | --- | --- |
@@ -110,8 +110,8 @@ Add the processor:
 
 ```kotlin
 dependencies {
-    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.0")
-    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.0")
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.1")
+    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.1")
 }
 ```
 
