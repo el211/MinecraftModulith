@@ -1,5 +1,7 @@
 # MinecraftModulith
 
+[![JitPack](https://jitpack.io/v/el211/MinecraftModulith.svg)](https://jitpack.io/#el211/MinecraftModulith)
+
 MinecraftModulith brings **Spring Modulith-style architecture to Minecraft plugins**: one plugin JAR, explicit internal modules, validated dependency boundaries, named public APIs, module events, deterministic lifecycle ordering, diagnostics, and Paper/Folia lifecycle adapters.
 
 > Current version: **0.2.0**
@@ -29,6 +31,17 @@ For platform-independent use, depend on `modulith-core` instead of `modulith-pap
 Bundle runtime dependencies in your plugin JAR, as the example plugin does.
 
 [JitPack builds](https://jitpack.io/#el211/MinecraftModulith/v0.2.0)
+
+All five library modules are published under `com.github.el211.MinecraftModulith`
+with version `v0.2.0`:
+
+| Artifact | Purpose |
+| --- | --- |
+| `modulith-core` | Platform-independent module runtime |
+| `modulith-paper` | Paper and Folia integration; includes core transitively |
+| `modulith-processor` | Compile-time architecture validation |
+| `modulith-events-sqlite` | Persistent event publication tracking |
+| `modulith-test` | Module test harness and assertions |
 
 ## What 0.2 adds
 
