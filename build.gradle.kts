@@ -1,6 +1,6 @@
 allprojects {
     group = "dev.oreo.modulith"
-    version = "0.2.0-SNAPSHOT"
+    version = "0.2.0"
 
     repositories {
         mavenCentral()
@@ -10,6 +10,18 @@ allprojects {
 
 subprojects {
     apply(plugin = "java-library")
+
+    if (name != "example-plugin") {
+        apply(plugin = "maven-publish")
+
+        extensions.configure<PublishingExtension> {
+            publications {
+                create<MavenPublication>("mavenJava") {
+                    from(components["java"])
+                }
+            }
+        }
+    }
 
     extensions.configure<JavaPluginExtension> {
         toolchain.languageVersion.set(JavaLanguageVersion.of(21))

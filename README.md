@@ -2,7 +2,33 @@
 
 MinecraftModulith brings **Spring Modulith-style architecture to Minecraft plugins**: one plugin JAR, explicit internal modules, validated dependency boundaries, named public APIs, module events, deterministic lifecycle ordering, diagnostics, and Paper/Folia lifecycle adapters.
 
-> Current version: **0.2.0-SNAPSHOT**
+> Current version: **0.2.0**
+
+## Install with JitPack
+
+Requires Java 21. Add the repository and the modules you need:
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven("https://jitpack.io")
+    maven("https://repo.papermc.io/repository/maven-public/")
+}
+
+dependencies {
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.0")
+    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.0")
+    // Optional persistent events and test utilities:
+    implementation("com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.2.0")
+    testImplementation("com.github.el211.MinecraftModulith:modulith-test:v0.2.0")
+    compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+}
+```
+
+For platform-independent use, depend on `modulith-core` instead of `modulith-paper`.
+Bundle runtime dependencies in your plugin JAR, as the example plugin does.
+
+[JitPack builds](https://jitpack.io/#el211/MinecraftModulith/v0.2.0)
 
 ## What 0.2 adds
 
@@ -71,8 +97,8 @@ Add the processor:
 
 ```kotlin
 dependencies {
-    implementation("dev.oreo.modulith:modulith-paper:0.2.0-SNAPSHOT")
-    annotationProcessor("dev.oreo.modulith:modulith-processor:0.2.0-SNAPSHOT")
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.0")
+    annotationProcessor("com.github.el211.MinecraftModulith:modulith-processor:v0.2.0")
 }
 ```
 
@@ -304,7 +330,7 @@ public final class MyPlugin extends JavaPlugin {
 Java 21 is the baseline.
 
 ```bash
-gradle clean build
+./gradlew clean build
 ```
 
 The default Paper API property is:
