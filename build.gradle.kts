@@ -11,7 +11,7 @@ allprojects {
 subprojects {
     apply(plugin = "java-library")
 
-    if (name != "example-plugin") {
+    if (name != "example-plugin" && name != "modulith-gradle-plugin") {
         apply(plugin = "maven-publish")
 
         extensions.configure<PublishingExtension> {
