@@ -477,8 +477,13 @@ or a named-interface package; all cross-module service lookup still checks decla
 `EventPayloadCodec` adds payload deserialization, allowing explicit at-least-once replay
 of pending events through `events.replayIncomplete(limit)`. Call only after listeners
 have registered and only from a single recovery worker for a given publication registry.
-Handlers must be idempotent. Multi-instance leases, automatic retries and dead-letter queues
-are **not yet implemented**.
+Handlers must be idempotent. Failed publications can be retried explicitly via
+`events.replayFailed(limit)` or quarantined with `events.deadLetter(id, reason)`.
+The SQLite, JDBC and MongoDB adapters support separate FAILED and DEAD_LETTER states.
+JDBC also offers `begin(Connection, type, listener, payload)` for caller-managed SQL
+transactions; MongoDB offers `begin(ClientSession, type, listener, payload)` for
+caller-managed Mongo transactions. Both defer commit control to the application.
+**Automatic backoff, persisted retry limits and multi-instance leases are not yet implemented.**
 
 `context.config(MySettings.class)` reads a typed immutable record snapshot and supports
 `@ConfigKey` and `@ConfigRange`.

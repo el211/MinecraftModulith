@@ -1,6 +1,7 @@
 package dev.oreo.modulith.mongodb;
 
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.ClientSession;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.Sorts;
@@ -65,6 +66,28 @@ public final class MongoEventPublicationRegistry implements EventPublicationRegi
         }
     }
 
+    /**
+     * Enqueues inside a caller-managed MongoDB ClientSession transaction.
+     * Does not commit or abort that transaction.
+     */
+    public EventPublication begin(ClientSession session, String eventType, String listenerId, String payload) {
+        Objects.requireNonNull(session, "session");
+        UUID id = UUID.randomUUID();
+        Instant now = Instant.now();
+        Document document = new Document()
+                .append("_id", id.toString())
+                .append("event_type", eventType)
+                .append("listener_id", listenerId)
+                .append("payload", payload)
+                .append("status", EventPublicationStatus.PENDING.name())
+                .append("published_at", now.toString())
+                .append("completed_at", null)
+                .append("error", null);
+        collection.insertOne(session, document);
+        return new EventPublication(id, eventType, listenerId, payload,
+                EventPublicationStatus.PENDING, now, null, null);
+    }
+
     @Override
     public void complete(UUID publicationId) {
         update(publicationId, EventPublicationStatus.COMPLETED, null);
@@ -101,6 +124,24 @@ public final class MongoEventPublicationRegistry implements EventPublicationRegi
         } catch (Exception exception) {
             throw new ModulithException("Could not query incomplete event publications", exception);
         }
+    }
+
+    @Override
+    public List<EventPublication> failed() {
+        try {
+            List<EventPublication> publications = new ArrayList<>();
+            collection.find(Filters.eq("status", EventPublicationStatus.FAILED.name()))
+                    .sort(Sorts.ascending("published_at"))
+                    .forEach(doc -> publications.add(fromDocument(doc)));
+            return List.copyOf(publications);
+        } catch (Exception exception) {
+            throw new ModulithException("Could not query failed event publications", exception);
+        }
+    }
+
+    @Override
+    public void deadLetter(UUID publicationId, String reason) {
+        update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
     }
 
     /** Returns all event publications ordered by publication time. */

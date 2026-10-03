@@ -245,8 +245,26 @@ public final class EventBus {
         if (!(serializer instanceof EventPayloadCodec codec)) {
             throw new ModulithException("Event recovery requires an EventPayloadCodec with deserialization");
         }
+        return replay(registry.incomplete(), limit, codec);
+    }
+
+    /** Explicitly retry previously failed listener deliveries (at least once). */
+    public EventRecoveryReport replayFailed(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event retry requires an EventPayloadCodec");
+        }
+        return replay(registry.failed(), limit, codec);
+    }
+
+    /** Quarantines a permanently failing publication if supported by the persistence adapter. */
+    public void deadLetter(UUID publicationId, String reason) {
+        registry.deadLetter(publicationId, reason);
+    }
+
+    private EventRecoveryReport replay(
+            List<EventPublication> publications, int limit, EventPayloadCodec codec) {
         int recovered = 0, failed = 0, unavailable = 0;
-        List<EventPublication> publications = registry.incomplete();
         for (int i = 0; i < Math.min(limit, publications.size()); i++) {
             EventPublication publication = publications.get(i);
             Handler handler = handlers.values().stream().flatMap(List::stream)

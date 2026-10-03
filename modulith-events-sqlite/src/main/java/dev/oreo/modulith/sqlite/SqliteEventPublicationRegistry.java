@@ -153,6 +153,31 @@ public final class SqliteEventPublicationRegistry implements EventPublicationReg
         }
     }
 
+    @Override
+    public List<EventPublication> failed() {
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication WHERE status = ? ORDER BY published_at ASC
+                """)) {
+            statement.setString(1, EventPublicationStatus.FAILED.name());
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) publications.add(read(result));
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query failed event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void deadLetter(UUID publicationId, String reason) {
+        update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
+    }
+
     public List<EventPublication> all() {
         lock.lock();
         try (PreparedStatement statement = connection.prepareStatement("""

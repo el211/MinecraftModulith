@@ -14,6 +14,14 @@ public interface EventPublicationRegistry {
 
     List<EventPublication> incomplete();
 
+    /** Explicit retry candidates; FAILED is kept separate from crash-pending PENDING. */
+    default List<EventPublication> failed() { return List.of(); }
+
+    /** Removes a poison publication from retry eligibility while retaining its audit trail. */
+    default void deadLetter(UUID publicationId, String reason) {
+        throw new UnsupportedOperationException("This registry has no dead-letter support");
+    }
+
     default long incompleteCount() {
         return incomplete().size();
     }

@@ -64,11 +64,23 @@ public final class JdbcEventPublicationRegistry implements EventPublicationRegis
 
     @Override
     public EventPublication begin(String eventType, String listenerId, String payload) {
+        try (Connection connection = dataSource.getConnection()) {
+            return begin(connection, eventType, listenerId, payload);
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not persist event publication", exception);
+        }
+    }
+
+    /**
+     * Writes into the caller's existing SQL transaction. Does not commit, roll back or
+     * close the connection. Replay the publication after the surrounding transaction commits.
+     */
+    public EventPublication begin(Connection connection, String eventType, String listenerId, String payload) {
+        Objects.requireNonNull(connection, "connection");
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
 
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("""
+        try (PreparedStatement statement = connection.prepareStatement("""
                      INSERT INTO modulith_event_publication
                          (id, event_type, listener_id, payload, status, published_at)
                      VALUES (?, ?, ?, ?, ?, ?)
@@ -134,6 +146,29 @@ public final class JdbcEventPublicationRegistry implements EventPublicationRegis
         } catch (SQLException exception) {
             throw new ModulithException("Could not query incomplete event publications", exception);
         }
+    }
+
+    @Override
+    public List<EventPublication> failed() {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                 FROM modulith_event_publication WHERE status = ? ORDER BY published_at ASC
+                 """)) {
+            statement.setString(1, EventPublicationStatus.FAILED.name());
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) publications.add(fromRow(result));
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query failed event publications", exception);
+        }
+    }
+
+    @Override
+    public void deadLetter(UUID publicationId, String reason) {
+        update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
     }
 
     /** Returns all event publications ordered by publication time. */
