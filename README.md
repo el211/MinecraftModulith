@@ -451,6 +451,48 @@ ModuleAssertions.assertValidArchitecture(modules);
 ModuleAssertions.assertMermaidContains(runtime, "homes");
 ```
 
+## Experimental next-generation APIs (feature branch)
+
+These APIs are being developed on `feat/modulith-architecture-and-runtime` and are not part
+of the published v0.3.0 artifact. The original class-based module declaration remains supported.
+
+### Package-based module declaration
+
+Use `package-info.java` to declare a package module. Annotation processing generates
+a `__MinecraftModulithModule` lifecycle anchor, which Paper's normal discovery can load:
+
+```java
+@ApplicationModule(id = "homes", allowedDependencies = {"economy::payments"})
+package dev.example.homes;
+import dev.oreo.modulith.core.ApplicationModule;
+```
+
+Named interfaces can be declared with `@NamedInterface("payments")` on an API package.
+Use `@ModuleComponent` for constructor-injected components and `@Inject` to select a constructor
+when the component has multiple constructors. Public cross-module interfaces need `@ModuleApi`
+or a named-interface package; all cross-module service lookup still checks declared dependencies.
+
+### Recovery, configuration and scheduling
+
+`EventPayloadCodec` adds payload deserialization, allowing explicit at-least-once replay
+of pending events through `events.replayIncomplete(limit)`. Call only after listeners
+have registered and only from a single recovery worker for a given publication registry.
+Handlers must be idempotent. Multi-instance leases, automatic retries and dead-letter queues
+are **not yet implemented**.
+
+`context.config(MySettings.class)` reads a typed immutable record snapshot and supports
+`@ConfigKey` and `@ConfigRange`.
+
+`context.platform(PaperPlatform.class).contexts()` exposes global, entity, region and
+async scheduling. Folia entity/region operations should use their own execution context.
+All returned task handles belong to their module's lifecycle.
+
+### Gradle plugin (experimental)
+
+`modulith-gradle-plugin` adds `verifyModulith`, `modulithDocs`,
+`modulithGraph` and `modulithTest`. It consumes processor-generated metadata;
+projects without module metadata fail `verifyModulith` intentionally.
+
 ## Feature overview
 
 | Feature | MinecraftModulith |

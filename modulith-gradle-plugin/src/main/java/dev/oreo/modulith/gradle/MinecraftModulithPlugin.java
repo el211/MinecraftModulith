@@ -52,13 +52,13 @@ public final class MinecraftModulithPlugin implements Plugin<Project> {
                             throw new GradleException("Unsafe module ID in metadata: " + id);
                         }
                         mermaid.append("  ").append(id).append("[\"").append(id).append("\"]\n");
-                        markdown.append("## ").append(id).append("\n\n").append("Class: \`")
-                                .append(values[1]).append("\`\n\n");
+                        markdown.append("## ").append(id).append("\n\n").append("Class: `")
+                                .append(values[1]).append("`\n\n");
                         if (!values[2].isBlank()) {
                             for (String dependency : values[2].split(",")) {
                                 String target = dependency.split("::", 2)[0];
                                 mermaid.append("  ").append(id).append(" --> ").append(target).append("\n");
-                                markdown.append("- Depends on \`").append(dependency).append("\`\n");
+                                markdown.append("- Depends on `").append(dependency).append("`\n");
                             }
                         }
                     }
