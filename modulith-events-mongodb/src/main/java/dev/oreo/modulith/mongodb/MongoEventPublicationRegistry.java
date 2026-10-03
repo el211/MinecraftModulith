@@ -3,6 +3,8 @@ package dev.oreo.modulith.mongodb;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.ClientSession;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.FindOneAndUpdateOptions;
+import com.mongodb.client.model.ReturnDocument;
 import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.Sorts;
 import com.mongodb.client.model.Updates;
@@ -55,7 +57,8 @@ public final class MongoEventPublicationRegistry implements EventPublicationRegi
                 .append("status", EventPublicationStatus.PENDING.name())
                 .append("published_at", now.toString())
                 .append("completed_at", null)
-                .append("error", null);
+                .append("error", null)
+                .append("retry_count", 0);
 
         try {
             collection.insertOne(document);
@@ -142,6 +145,22 @@ public final class MongoEventPublicationRegistry implements EventPublicationRegi
     @Override
     public void deadLetter(UUID publicationId, String reason) {
         update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
+    }
+
+    @Override
+    public int retryCount(UUID publicationId) {
+        Document doc = collection.find(Filters.eq("_id", publicationId.toString())).first();
+        return doc == null ? 0 : doc.getInteger("retry_count", 0);
+    }
+
+    @Override
+    public int incrementRetryCount(UUID publicationId) {
+        Document result = collection.findOneAndUpdate(
+                Filters.and(Filters.eq("_id", publicationId.toString()),
+                        Filters.eq("status", EventPublicationStatus.FAILED.name())),
+                Updates.inc("retry_count", 1),
+                new FindOneAndUpdateOptions().returnDocument(ReturnDocument.AFTER));
+        return result == null ? 0 : result.getInteger("retry_count", 0);
     }
 
     /** Returns all event publications ordered by publication time. */

@@ -57,6 +57,12 @@ public final class JdbcEventPublicationRegistry implements EventPublicationRegis
                     CREATE INDEX IF NOT EXISTS idx_modulith_event_publication_status
                     ON modulith_event_publication(status)
                     """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS modulith_event_retry (
+                        publication_id VARCHAR(36) PRIMARY KEY,
+                        retry_count INTEGER NOT NULL
+                    )
+                    """);
         } catch (SQLException exception) {
             throw new ModulithException("Could not initialize JDBC event publication registry", exception);
         }
@@ -169,6 +175,65 @@ public final class JdbcEventPublicationRegistry implements EventPublicationRegis
     @Override
     public void deadLetter(UUID publicationId, String reason) {
         update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
+    }
+
+    @Override
+    public int retryCount(UUID publicationId) {
+        try (Connection connection = dataSource.getConnection()) {
+            return readRetryCount(connection, publicationId);
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not read retry count", exception);
+        }
+    }
+
+    private static int readRetryCount(Connection connection, UUID id) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT retry_count FROM modulith_event_retry WHERE publication_id = ?")) {
+            statement.setString(1, id.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getInt(1) : 0;
+            }
+        }
+    }
+
+    @Override
+    public int incrementRetryCount(UUID publicationId) {
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                try (PreparedStatement check = connection.prepareStatement(
+                        "SELECT status FROM modulith_event_publication WHERE id = ?")) {
+                    check.setString(1, publicationId.toString());
+                    try (ResultSet result = check.executeQuery()) {
+                        if (!result.next() || !EventPublicationStatus.FAILED.name().equals(result.getString(1))) {
+                            connection.rollback();
+                            return 0;
+                        }
+                    }
+                }
+                int updated;
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE modulith_event_retry SET retry_count = retry_count + 1 WHERE publication_id = ?")) {
+                    statement.setString(1, publicationId.toString());
+                    updated = statement.executeUpdate();
+                }
+                if (updated == 0) {
+                    try (PreparedStatement insert = connection.prepareStatement(
+                            "INSERT INTO modulith_event_retry (publication_id, retry_count) VALUES (?, 1)")) {
+                        insert.setString(1, publicationId.toString());
+                        insert.executeUpdate();
+                    }
+                }
+                int count = readRetryCount(connection, publicationId);
+                connection.commit();
+                return count;
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not increment retry count", exception);
+        }
     }
 
     /** Returns all event publications ordered by publication time. */
