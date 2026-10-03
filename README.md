@@ -483,7 +483,12 @@ The SQLite, JDBC and MongoDB adapters support separate FAILED and DEAD_LETTER st
 JDBC also offers `begin(Connection, type, listener, payload)` for caller-managed SQL
 transactions; MongoDB offers `begin(ClientSession, type, listener, payload)` for
 caller-managed Mongo transactions. Both defer commit control to the application.
-**Automatic backoff, persisted retry limits and multi-instance leases are not yet implemented.**
+Use the single-worker `EventRetryCoordinator` to periodically process FAILED records with
+persisted retry counts, exponential backoff and a bounded dead-letter threshold. Schedule
+`tick(now, batchSize)` on the correct platform execution context for your listeners.
+Attempts are stored in a separate SQL retry table or MongoDB document field; existing
+publication tables do not require destructive migration. **Multi-instance leases and
+exactly-once delivery are not implemented**, so use one recovery worker per registry.
 
 `context.config(MySettings.class)` reads a typed immutable record snapshot and supports
 `@ConfigKey` and `@ConfigRange`.
