@@ -55,6 +55,7 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
     private final Map<String, ModuleInfo> modulesByPackage = new LinkedHashMap<>();
     private final Set<String> scannedUnits = new HashSet<>();
     private final Set<String> reported = new HashSet<>();
+    private final Map<String, Set<String>> exportedApis = new HashMap<>();
     private boolean metadataWritten;
 
     @Override
@@ -176,6 +177,27 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
             if (packageName.contains(".internal") || packageName.endsWith(".internal")) {
                 error(type, "@ModuleApi cannot be declared from an internal package: " + packageName);
             }
+            ModuleInfo owner = ownerOf(packageName, modulesByPackage.values().stream()
+                    .sorted(Comparator.comparingInt((ModuleInfo info) -> info.packageName().length()).reversed())
+                    .toList());
+            if (owner != null) exportedApis.computeIfAbsent(owner.id(), ignored -> new HashSet<>()).add(apiName);
+        }
+        for (Element element : roundEnv.getElementsAnnotatedWith(NamedInterface.class)) {
+            if (!(element instanceof PackageElement pkg)) continue;
+            NamedInterface annotation = pkg.getAnnotation(NamedInterface.class);
+            String value = annotation.value().trim();
+            String packageName = pkg.getQualifiedName().toString();
+            if (value.isBlank() || value.contains("::")) {
+                error(pkg, "@NamedInterface must have a non-blank name without '::'");
+            }
+            if (packageName.contains(".internal") || packageName.endsWith(".internal")) {
+                error(pkg, "@NamedInterface cannot expose internal packages: " + packageName);
+            }
+            ModuleInfo owner = ownerOf(packageName, modulesByPackage.values().stream()
+                    .sorted(Comparator.comparingInt((ModuleInfo info) -> info.packageName().length()).reversed())
+                    .toList());
+            if (owner == null) error(pkg, "Named API package is not owned by a module: " + packageName);
+            else exportedApis.computeIfAbsent(owner.id(), ignored -> new HashSet<>()).add(value);
         }
     }
 
@@ -195,6 +217,13 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                     error(module.element(), "Invalid dependency selector '" + raw + "'");
                 } else if (!modulesById.containsKey(targetId)) {
                     error(module.element(), "Module '" + module.id() + "' depends on missing module '" + targetId + "'");
+                } else if (delimiter >= 0) {
+                    String selectedApi = raw.substring(delimiter + 2).trim();
+                    if (!selectedApi.isEmpty() &&
+                            !exportedApis.getOrDefault(targetId, Set.of()).contains(selectedApi)) {
+                        error(module.element(), "Module '" + module.id() + "' depends on unknown named API '" +
+                                raw + "'. Available: " + exportedApis.getOrDefault(targetId, Set.of()));
+                    }
                 }
             }
         }
