@@ -18,6 +18,19 @@ public interface EventPublicationRegistry {
     default List<EventPublication> failed() { return List.of(); }
 
     /** Removes a poison publication from retry eligibility while retaining its audit trail. */
+    /** Retries already attempted for this publication, persisted by a supporting adapter. */
+    default int retryCount(UUID publicationId) {
+        throw new UnsupportedOperationException("Retry counters are unsupported");
+    }
+
+    /**
+     * Increment only if publication status is still FAILED. Return 0 when no longer eligible.
+     * Single-worker operation is required until distributed claims/leases are supported.
+     */
+    default int incrementRetryCount(UUID publicationId) {
+        throw new UnsupportedOperationException("Retry counters are unsupported");
+    }
+
     default void deadLetter(UUID publicationId, String reason) {
         throw new UnsupportedOperationException("This registry has no dead-letter support");
     }

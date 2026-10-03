@@ -257,6 +257,16 @@ public final class EventBus {
         return replay(registry.failed(), limit, codec);
     }
 
+    /** Retries one exact failed publication without generating an extra record. */
+    public EventRecoveryReport replayFailedPublication(UUID publicationId) {
+        Objects.requireNonNull(publicationId);
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event retry requires an EventPayloadCodec");
+        }
+        return replay(registry.failed().stream()
+                .filter(pub -> pub.id().equals(publicationId)).toList(), 1, codec);
+    }
+
     /** Quarantines a permanently failing publication if supported by the persistence adapter. */
     public void deadLetter(UUID publicationId, String reason) {
         registry.deadLetter(publicationId, reason);
