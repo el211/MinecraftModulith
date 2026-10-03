@@ -121,7 +121,10 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
             ApplicationModule annotation = pkg.getAnnotation(ApplicationModule.class);
             String id = annotation.id().trim();
             String packageName = pkg.getQualifiedName().toString();
-            if (id.isBlank()) { error(pkg, "@ApplicationModule id cannot be blank"); continue; }
+            if (!id.matches("[A-Za-z][A-Za-z0-9_-]*")) {
+                error(pkg, "@ApplicationModule id must be a non-blank alphanumeric identifier");
+                continue;
+            }
             if (modulesByPackage.containsKey(packageName)) {
                 error(pkg, "Do not declare both @PluginModule and @ApplicationModule in " + packageName);
                 continue;
@@ -139,14 +142,14 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 var file = processingEnv.getFiler().createSourceFile(generated, pkg);
                 try (Writer writer = file.openWriter()) {
                     String quoted = java.util.Arrays.stream(annotation.allowedDependencies())
-                            .map(v -> "\\\"" + v.replace("\\", "\\\\").replace("\\"", "\\\"") + "\\\"")
+                            .map(v -> "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
                             .collect(java.util.stream.Collectors.joining(", "));
-                    writer.write("package " + packageName + ";\\n");
-                    writer.write("@dev.oreo.modulith.core.PluginModule(value=\\\"" + id +
-                            "\\", dependencies={" + quoted + "}, configuration=" +
-                            annotation.configuration() + ")\\n");
+                    writer.write("package " + packageName + ";\n");
+                    writer.write("@dev.oreo.modulith.core.PluginModule(value=\"" + id +
+                            "\", dependencies={" + quoted + "}, configuration=" +
+                            annotation.configuration() + ")\n");
                     writer.write("public final class __MinecraftModulithModule implements " +
-                            "dev.oreo.modulith.core.MinecraftModule {}\\n");
+                            "dev.oreo.modulith.core.MinecraftModule {}\n");
                 }
             } catch (IOException ex) {
                 error(pkg, "Could not generate module anchor: " + ex.getMessage());
