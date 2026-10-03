@@ -378,7 +378,7 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
             String className,
             List<String> dependencies,
             boolean configuration,
-            TypeElement element
+            Element element
     ) {
     }
 }
