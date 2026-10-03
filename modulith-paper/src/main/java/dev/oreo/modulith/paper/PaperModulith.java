@@ -7,11 +7,16 @@ import dev.oreo.modulith.core.ModuleConfigurationProvider;
 import dev.oreo.modulith.core.ModuleRuntime;
 import dev.oreo.modulith.core.ModulithException;
 import dev.oreo.modulith.core.PluginModule;
+import dev.oreo.modulith.core.ModuleComponent;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -41,6 +46,7 @@ public final class PaperModulith implements AutoCloseable {
     public static final class Builder {
         private final JavaPlugin plugin;
         private final Set<Class<? extends MinecraftModule>> explicitModules = new LinkedHashSet<>();
+        private final Map<String, List<Class<?>>> explicitComponents = new LinkedHashMap<>();
         private String basePackage;
         private EventPublicationRegistry publicationRegistry = EventPublicationRegistry.noop();
         private EventPayloadSerializer eventSerializer = EventPayloadSerializer.toStringSerializer();
@@ -53,6 +59,11 @@ public final class PaperModulith implements AutoCloseable {
 
         public Builder basePackage(String basePackage) {
             this.basePackage = Objects.requireNonNull(basePackage, "basePackage");
+            return this;
+        }
+
+        public Builder component(String moduleId, Class<?> componentType) {
+            explicitComponents.computeIfAbsent(moduleId, ignored -> new ArrayList<>()).add(componentType);
             return this;
         }
 
@@ -95,7 +106,7 @@ public final class PaperModulith implements AutoCloseable {
                     ? configurationProvider
                     : new YamlModuleConfigurationProvider(plugin);
 
-            ModuleRuntime runtime = ModuleRuntime.builder()
+            ModuleRuntime.Builder runtimeBuilder = ModuleRuntime.builder()
                     .modules(modules)
                     .platformService(JavaPlugin.class, plugin)
                     .platformService(PaperPlatform.class, paperPlatform)
@@ -104,9 +115,33 @@ public final class PaperModulith implements AutoCloseable {
                     .eventSerializer(eventSerializer)
                     .eventExecutor(eventExecutor)
                     .configurationProvider(configs)
-                    .logger(plugin.getLogger())
-                    .start();
-            return new PaperModulith(runtime);
+                    .logger(plugin.getLogger());
+            explicitComponents.forEach((id, types) -> types.forEach(type -> runtimeBuilder.component(id, type)));
+            if (basePackage != null && !basePackage.isBlank()) {
+                discoverComponents(basePackage, modules).forEach((id, types) ->
+                        types.forEach(type -> runtimeBuilder.component(id, type)));
+            }
+            return new PaperModulith(runtimeBuilder.start());
+        }
+
+        private Map<String, List<Class<?>>> discoverComponents(
+                String packageName, Set<Class<? extends MinecraftModule>> modules) {
+            Map<String, List<Class<?>>> result = new LinkedHashMap<>();
+            try (ScanResult scan = new ClassGraph()
+                    .overrideClassLoaders(plugin.getClass().getClassLoader())
+                    .acceptPackages(packageName).enableClassInfo().enableAnnotationInfo().scan()) {
+                for (Class<?> type : scan.getClassesWithAnnotation(ModuleComponent.class).loadClasses()) {
+                    Class<? extends MinecraftModule> owner = modules.stream()
+                            .filter(module -> type.getPackageName().equals(module.getPackageName()) ||
+                                    type.getPackageName().startsWith(module.getPackageName() + "."))
+                            .max(java.util.Comparator.comparingInt(m -> m.getPackageName().length()))
+                            .orElseThrow(() -> new ModulithException(
+                                    "No module owns component " + type.getName()));
+                    result.computeIfAbsent(owner.getAnnotation(PluginModule.class).value(),
+                            ignored -> new ArrayList<>()).add(type);
+                }
+            }
+            return result;
         }
 
         private Set<Class<? extends MinecraftModule>> discover(String packageName) {

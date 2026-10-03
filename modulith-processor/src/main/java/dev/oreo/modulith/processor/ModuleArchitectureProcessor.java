@@ -7,6 +7,8 @@ import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import dev.oreo.modulith.core.ModuleApi;
+import dev.oreo.modulith.core.ApplicationModule;
+import dev.oreo.modulith.core.NamedInterface;
 import dev.oreo.modulith.core.PluginModule;
 
 import javax.annotation.processing.AbstractProcessor;
@@ -42,7 +44,9 @@ import java.util.Set;
  */
 @SupportedAnnotationTypes({
         "dev.oreo.modulith.core.PluginModule",
-        "dev.oreo.modulith.core.ModuleApi"
+        "dev.oreo.modulith.core.ModuleApi",
+        "dev.oreo.modulith.core.ApplicationModule",
+        "dev.oreo.modulith.core.NamedInterface"
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class ModuleArchitectureProcessor extends AbstractProcessor {
@@ -62,6 +66,7 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         collectModules(roundEnv);
+        collectPackageModules(roundEnv);
         validateApiDeclarations(roundEnv);
 
         if (!roundEnv.processingOver()) {
@@ -76,7 +81,8 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
 
     private void collectModules(RoundEnvironment roundEnv) {
         for (Element element : roundEnv.getElementsAnnotatedWith(PluginModule.class)) {
-            if (!(element instanceof TypeElement type)) {
+            if (!(element instanceof TypeElement type) ||
+                    type.getSimpleName().contentEquals("__MinecraftModulithModule")) {
                 continue;
             }
 
@@ -104,6 +110,46 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                         + previous.className());
             } else {
                 modulesByPackage.put(packageName, info);
+            }
+        }
+    }
+
+
+    private void collectPackageModules(RoundEnvironment roundEnv) {
+        for (Element element : roundEnv.getElementsAnnotatedWith(ApplicationModule.class)) {
+            if (!(element instanceof PackageElement pkg)) continue;
+            ApplicationModule annotation = pkg.getAnnotation(ApplicationModule.class);
+            String id = annotation.id().trim();
+            String packageName = pkg.getQualifiedName().toString();
+            if (id.isBlank()) { error(pkg, "@ApplicationModule id cannot be blank"); continue; }
+            if (modulesByPackage.containsKey(packageName)) {
+                error(pkg, "Do not declare both @PluginModule and @ApplicationModule in " + packageName);
+                continue;
+            }
+            String generated = packageName + ".__MinecraftModulithModule";
+            ModuleInfo info = new ModuleInfo(id, packageName, generated,
+                    List.of(annotation.allowedDependencies()), annotation.configuration(), pkg);
+            ModuleInfo previous = modulesById.putIfAbsent(id, info);
+            if (previous != null && !previous.className().equals(generated)) {
+                error(pkg, "Duplicate MinecraftModulith module id '" + id + "'");
+                continue;
+            }
+            modulesByPackage.put(packageName, info);
+            try {
+                var file = processingEnv.getFiler().createSourceFile(generated, pkg);
+                try (Writer writer = file.openWriter()) {
+                    String quoted = java.util.Arrays.stream(annotation.allowedDependencies())
+                            .map(v -> "\\\"" + v.replace("\\", "\\\\").replace("\\"", "\\\"") + "\\\"")
+                            .collect(java.util.stream.Collectors.joining(", "));
+                    writer.write("package " + packageName + ";\\n");
+                    writer.write("@dev.oreo.modulith.core.PluginModule(value=\\\"" + id +
+                            "\\", dependencies={" + quoted + "}, configuration=" +
+                            annotation.configuration() + ")\\n");
+                    writer.write("public final class __MinecraftModulithModule implements " +
+                            "dev.oreo.modulith.core.MinecraftModule {}\\n");
+                }
+            } catch (IOException ex) {
+                error(pkg, "Could not generate module anchor: " + ex.getMessage());
             }
         }
     }
@@ -239,13 +285,16 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         }
 
         ModuleApi api = targetType.getAnnotation(ModuleApi.class);
-        if (api == null) {
+        PackageElement targetPackageElement = processingEnv.getElementUtils().getPackageElement(targetPackage);
+        NamedInterface named = targetPackageElement == null ? null :
+                targetPackageElement.getAnnotation(NamedInterface.class);
+        if (api == null && named == null) {
             errorAt(path, "Cross-module reference to " + targetType.getQualifiedName()
                     + " is not allowed because it is not annotated with @ModuleApi");
             return;
         }
 
-        String apiName = api.value().trim();
+        String apiName = api != null ? api.value().trim() : named.value().trim();
         boolean allowed = sourceModule.dependencies().stream().anyMatch(raw -> {
             if (raw.equals(targetModule.id())) {
                 return true;

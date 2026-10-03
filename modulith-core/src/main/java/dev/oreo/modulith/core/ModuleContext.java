@@ -6,6 +6,7 @@ import java.util.logging.Logger;
 
 /** Runtime facilities available to a module. */
 public final class ModuleContext {
+    private ModuleComponents components;
     private final String moduleId;
     private final ModuleServices services;
     private final EventBus events;
@@ -31,6 +32,11 @@ public final class ModuleContext {
         this.platformServices = platformServices;
         this.logger = logger;
     }
+
+    void setComponents(ModuleComponents components) { this.components = components; }
+
+    /** Access constructor-injected components owned by this module. */
+    public ModuleComponents components() { return Objects.requireNonNull(components, "components not initialized"); }
 
     public String moduleId() {
         return moduleId;

@@ -20,6 +20,7 @@ import java.util.logging.Logger;
 /** Validates, starts, observes and stops a set of internal plugin modules. */
 public final class ModuleRuntime implements AutoCloseable {
     private final List<ModuleDescriptor> startupOrder;
+    private final Map<String, List<Class<?>>> componentTypes;
     private final Map<Class<?>, Object> platformServices;
     private final Logger logger;
     private final EventPublicationRegistry publicationRegistry;
@@ -39,9 +40,11 @@ public final class ModuleRuntime implements AutoCloseable {
             EventPublicationRegistry publicationRegistry,
             EventPayloadSerializer eventSerializer,
             ModuleConfigurationProvider configurationProvider,
-            ModulithMetrics metrics
+            ModulithMetrics metrics,
+            Map<String, List<Class<?>>> componentTypes
     ) {
         this.startupOrder = startupOrder;
+        this.componentTypes = componentTypes;
         this.platformServices = Map.copyOf(platformServices);
         this.logger = logger;
         this.publicationRegistry = publicationRegistry;
@@ -100,6 +103,10 @@ public final class ModuleRuntime implements AutoCloseable {
 
         long startedAt = System.nanoTime();
         try {
+            ModuleComponents components = new ModuleComponents(
+                    context, componentTypes.getOrDefault(descriptor.id(), List.of()));
+            context.setComponents(components);
+            components.initialize();
             instance.enable(context);
             running.put(descriptor.id(), new RunningModule(descriptor, instance, lifecycle, configuration));
             states.put(descriptor.id(), ModuleState.RUNNING);
@@ -242,6 +249,7 @@ public final class ModuleRuntime implements AutoCloseable {
 
     public static final class Builder {
         private final Set<Class<? extends MinecraftModule>> moduleTypes = new LinkedHashSet<>();
+        private final Map<String, List<Class<?>>> components = new LinkedHashMap<>();
         private final Map<Class<?>, Object> platformServices = new LinkedHashMap<>();
         private Logger logger = Logger.getLogger("MinecraftModulith");
         private Executor eventExecutor = ForkJoinPool.commonPool();
@@ -252,6 +260,12 @@ public final class ModuleRuntime implements AutoCloseable {
 
         public Builder module(Class<? extends MinecraftModule> moduleType) {
             moduleTypes.add(Objects.requireNonNull(moduleType, "moduleType"));
+            return this;
+        }
+
+        /** Registers a module-scoped injectable class (also supported in standalone tests). */
+        public Builder component(String moduleId, Class<?> type) {
+            components.computeIfAbsent(moduleId, ignored -> new ArrayList<>()).add(type);
             return this;
         }
 
@@ -310,7 +324,8 @@ public final class ModuleRuntime implements AutoCloseable {
                     publicationRegistry,
                     eventSerializer,
                     configurationProvider,
-                    metrics
+                    metrics,
+                    Map.copyOf(components)
             );
         }
 
