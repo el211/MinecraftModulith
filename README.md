@@ -497,6 +497,13 @@ exactly-once delivery are not implemented**, so use one recovery worker per regi
 async scheduling. Folia entity/region operations should use their own execution context.
 All returned task handles belong to their module's lifecycle.
 
+### Optional administrator diagnostics
+
+Enable `diagnosticsCommand(true)` on `PaperModulith.Builder` to register Paper's
+lifecycle-based `/modulith modules|events|graph` command. Access requires
+`minecraftmodulith.admin`. The separate observability artifact offers
+dependency-free Prometheus exposition and an opt-in OpenTelemetry reporter.
+
 ### JUnit module tests
 
 ```java

@@ -12,6 +12,7 @@ import dev.oreo.modulith.core.ModuleContributor;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import org.bukkit.plugin.java.JavaPlugin;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -51,6 +52,7 @@ public final class PaperModulith implements AutoCloseable {
         private final Map<String, List<Class<?>>> explicitComponents = new LinkedHashMap<>();
         private String basePackage;
         private boolean discoverContributors;
+        private boolean diagnosticsCommand;
         private EventPublicationRegistry publicationRegistry = EventPublicationRegistry.noop();
         private EventPayloadSerializer eventSerializer = EventPayloadSerializer.toStringSerializer();
         private Executor eventExecutor = ForkJoinPool.commonPool();
@@ -61,6 +63,12 @@ public final class PaperModulith implements AutoCloseable {
         }
 
         /** Discover classpath-visible module contributors through Java ServiceLoader. */
+        /** Enables /modulith [modules|events|graph] for permission minecraftmodulith.admin. */
+        public Builder diagnosticsCommand(boolean enabled) {
+            this.diagnosticsCommand = enabled;
+            return this;
+        }
+
         public Builder discoverContributors(boolean enabled) {
             this.discoverContributors = enabled;
             return this;
@@ -137,7 +145,13 @@ public final class PaperModulith implements AutoCloseable {
                 discoverComponents(basePackage, modules).forEach((id, types) ->
                         types.forEach(type -> runtimeBuilder.component(id, type)));
             }
-            return new PaperModulith(runtimeBuilder.start());
+            ModuleRuntime runtime = runtimeBuilder.start();
+            if (diagnosticsCommand) {
+                plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
+                        event.registrar().register("modulith", "MinecraftModulith runtime diagnostics",
+                                List.of(), new ModulithAdminCommand(runtime)));
+            }
+            return new PaperModulith(runtime);
         }
 
         private Map<String, List<Class<?>>> discoverComponents(
