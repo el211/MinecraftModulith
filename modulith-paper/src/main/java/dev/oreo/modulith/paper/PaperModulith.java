@@ -8,6 +8,7 @@ import dev.oreo.modulith.core.ModuleRuntime;
 import dev.oreo.modulith.core.ModulithException;
 import dev.oreo.modulith.core.PluginModule;
 import dev.oreo.modulith.core.ModuleComponent;
+import dev.oreo.modulith.core.ModuleContributor;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ScanResult;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.ServiceLoader;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -48,6 +50,7 @@ public final class PaperModulith implements AutoCloseable {
         private final Set<Class<? extends MinecraftModule>> explicitModules = new LinkedHashSet<>();
         private final Map<String, List<Class<?>>> explicitComponents = new LinkedHashMap<>();
         private String basePackage;
+        private boolean discoverContributors;
         private EventPublicationRegistry publicationRegistry = EventPublicationRegistry.noop();
         private EventPayloadSerializer eventSerializer = EventPayloadSerializer.toStringSerializer();
         private Executor eventExecutor = ForkJoinPool.commonPool();
@@ -55,6 +58,12 @@ public final class PaperModulith implements AutoCloseable {
 
         private Builder(JavaPlugin plugin) {
             this.plugin = Objects.requireNonNull(plugin, "plugin");
+        }
+
+        /** Discover classpath-visible module contributors through Java ServiceLoader. */
+        public Builder discoverContributors(boolean enabled) {
+            this.discoverContributors = enabled;
+            return this;
         }
 
         public Builder basePackage(String basePackage) {
@@ -96,6 +105,13 @@ public final class PaperModulith implements AutoCloseable {
             Set<Class<? extends MinecraftModule>> modules = new LinkedHashSet<>(explicitModules);
             if (basePackage != null && !basePackage.isBlank()) {
                 modules.addAll(discover(basePackage));
+            }
+            if (discoverContributors) {
+                ServiceLoader.load(ModuleContributor.class, plugin.getClass().getClassLoader()).forEach(provider -> {
+                    modules.addAll(provider.modules());
+                    provider.components().forEach((moduleId, types) ->
+                            types.forEach(type -> component(moduleId, type)));
+                });
             }
             if (modules.isEmpty()) {
                 throw new ModulithException("No MinecraftModulith modules were discovered");

@@ -18,6 +18,11 @@ public final class LifecycleScope implements AutoCloseable {
         cleanup.push(action);
     }
 
+    /** Whether this scope has been fully closed. */
+    public synchronized boolean isClosed() {
+        return closed;
+    }
+
     @Override
     public void close() {
         RuntimeException first = null;

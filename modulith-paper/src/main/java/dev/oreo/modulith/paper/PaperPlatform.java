@@ -2,6 +2,9 @@ package dev.oreo.modulith.paper;
 
 import dev.oreo.modulith.core.ModuleContext;
 import dev.oreo.modulith.core.ModulithException;
+import io.papermc.paper.command.brigadier.BasicCommand;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import java.util.Collection;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -99,6 +102,24 @@ public final class PaperPlatform {
         BukkitTask task = Bukkit.getScheduler().runTaskTimer(plugin, runnable, delayTicks, periodTicks);
         context.lifecycle().onClose(task::cancel);
         return task;
+    }
+
+    /**
+     * Registers a simple command using Paper's lifecycle-based Brigadier registrar.
+     * The listener skips future re-registrations once its module scope has closed.
+     * Paper controls the current command tree until the next lifecycle refresh.
+     */
+    public void registerBasicCommand(
+            ModuleContext context, String label, String description,
+            Collection<String> aliases, BasicCommand command) {
+        Objects.requireNonNull(context);
+        Objects.requireNonNull(label);
+        Objects.requireNonNull(command);
+        plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
+            if (!context.lifecycle().isClosed()) {
+                event.registrar().register(label, description, aliases, command);
+            }
+        });
     }
 
     public CommandRegistration registerCommand(
