@@ -44,13 +44,14 @@ class ModuleComponentsTest {
 
     @Test
     void rejectsUndeclaredInjection() {
-        assertThrows(ModuleDependencyException.class, () -> {
+        ModulithException failure = assertThrows(ModulithException.class, () -> {
             try (ModuleRuntime ignored = ModuleRuntime.builder()
                     .module(Economy.class).module(Undeclared.class)
                     .component("economy", EconomyComponent.class)
                     .component("undeclared", HomesComponent.class)
                     .start()) {}
         });
+        assertInstanceOf(ModuleDependencyException.class, failure.getCause());
     }
 
     @PluginModule("undeclared")
