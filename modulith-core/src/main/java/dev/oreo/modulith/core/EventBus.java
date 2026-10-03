@@ -235,6 +235,51 @@ public final class EventBus {
         });
     }
 
+    /**
+     * Replays pending records without inserting duplicate publications. Call only after every
+     * module listener has registered. Delivery is at-least-once: listeners must be idempotent.
+     * This method must be run by one recovery worker at a time for a given registry.
+     */
+    public EventRecoveryReport replayIncomplete(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event recovery requires an EventPayloadCodec with deserialization");
+        }
+        int recovered = 0, failed = 0, unavailable = 0;
+        List<EventPublication> publications = registry.incomplete();
+        for (int i = 0; i < Math.min(limit, publications.size()); i++) {
+            EventPublication publication = publications.get(i);
+            Handler handler = handlers.values().stream().flatMap(List::stream)
+                    .filter(h -> h.id().equals(publication.listenerId()))
+                    .findFirst().orElse(null);
+            if (handler == null) { unavailable++; continue; }
+            try {
+                Object event = codec.deserialize(publication.eventType(), publication.payload());
+                // Reuse the publication ID so replay never inserts a second pending record.
+                invokeExisting(handler, event, publication.id()).toCompletableFuture().join();
+                recovered++;
+            } catch (RuntimeException exception) {
+                failed++;
+            }
+        }
+        return new EventRecoveryReport(recovered, failed, unavailable);
+    }
+
+    private CompletionStage<Void> invokeExisting(Handler handler, Object event, UUID publicationId) {
+        CompletableFuture<Void> future;
+        if (handler.delivery() == EventDelivery.ASYNC) {
+            future = CompletableFuture.supplyAsync(() -> handler.invocation().invoke(event), executor)
+                    .thenCompose(stage -> stage).toCompletableFuture();
+        } else {
+            try { future = handler.invocation().invoke(event).toCompletableFuture(); }
+            catch (RuntimeException exception) { future = CompletableFuture.failedFuture(exception); }
+        }
+        return future.whenComplete((ignored, error) -> {
+            if (error == null) registry.complete(publicationId);
+            else registry.fail(publicationId, unwrap(error).toString());
+        });
+    }
+
     private List<Handler> matchingHandlers(Class<?> actualType) {
         List<Handler> matching = new ArrayList<>();
         handlers.forEach((registeredType, registeredHandlers) -> {

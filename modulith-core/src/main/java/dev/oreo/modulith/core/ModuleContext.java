@@ -58,6 +58,11 @@ public final class ModuleContext {
         return configuration;
     }
 
+    /** Reads a validated immutable record snapshot of this module's configuration. */
+    public <T extends Record> T config(Class<T> recordType) {
+        return TypedModuleConfiguration.read(configuration, recordType);
+    }
+
     public Logger logger() {
         return logger;
     }

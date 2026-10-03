@@ -23,10 +23,12 @@ import java.util.Objects;
 public final class PaperPlatform {
     private final JavaPlugin plugin;
     private final SchedulerAdapter scheduler;
+    private final ModuleScheduler contexts;
 
     PaperPlatform(JavaPlugin plugin) {
         this.plugin = plugin;
         this.scheduler = SchedulerAdapter.detect(plugin);
+        this.contexts = new ModuleScheduler(plugin, scheduler);
     }
 
     public JavaPlugin plugin() {
@@ -35,6 +37,11 @@ public final class PaperPlatform {
 
     public SchedulerAdapter scheduler() {
         return scheduler;
+    }
+
+    /** Region/entity/global/async scheduling with module-owned cancellation. */
+    public ModuleScheduler contexts() {
+        return contexts;
     }
 
     public <T extends Listener> T registerListener(ModuleContext context, T listener) {
