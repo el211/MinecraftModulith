@@ -487,6 +487,21 @@ are **not yet implemented**.
 async scheduling. Folia entity/region operations should use their own execution context.
 All returned task handles belong to their module's lifecycle.
 
+### JUnit module tests
+
+```java
+@MinecraftModuleTest(
+    value = "homes",
+    modules = {EconomyModule.class, HomesModule.class}
+)
+class HomesModuleTest {
+    @Test
+    void startsOnlyRequiredModules(ModuleTestHarness harness) {
+        harness.assertRunning("economy").assertRunning("homes");
+    }
+}
+```
+
 ### Gradle plugin (experimental)
 
 `modulith-gradle-plugin` adds `verifyModulith`, `modulithDocs`,
