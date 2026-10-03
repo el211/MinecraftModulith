@@ -9,7 +9,7 @@
 
 MinecraftModulith helps you build large Paper/Folia plugins as a set of explicit, testable modules instead of one tightly coupled codebase. It provides module boundaries, named APIs, dependency validation, lifecycle management, events, diagnostics, configuration, scheduling adapters, and test utilities while still producing a normal Minecraft plugin.
 
-> **Current release:** `v0.2.1`  
+> **Current release:** `v0.3.0`  
 > **Java:** 21  
 > **Platform:** Paper 1.21.x + Folia-aware scheduling
 
@@ -66,19 +66,25 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.2.1")
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.3.0")
 
     annotationProcessor(
-        "com.github.el211.MinecraftModulith:modulith-processor:v0.2.1"
+        "com.github.el211.MinecraftModulith:modulith-processor:v0.3.0"
     )
 
-    // Optional
+    // Optional: pick one or more persistence backends
     implementation(
-        "com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.2.1"
+        "com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.3.0"
+    )
+    implementation(
+        "com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.3.0"
+    )
+    implementation(
+        "com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.3.0"
     )
 
     testImplementation(
-        "com.github.el211.MinecraftModulith:modulith-test:v0.2.1"
+        "com.github.el211.MinecraftModulith:modulith-test:v0.3.0"
     )
 }
 ```
@@ -93,15 +99,17 @@ For platform-independent usage, use `modulith-core` instead of `modulith-paper`.
 | `modulith-paper` | Paper/Folia bootstrap, scheduler, commands and YAML configuration |
 | `modulith-processor` | Compile-time module and architecture validation |
 | `modulith-events-sqlite` | Persistent event publication tracking through SQLite |
+| `modulith-events-jdbc` | Persistent event publication tracking through any JDBC data source (PostgreSQL, MySQL, MariaDB, H2, SQL Server, …) |
+| `modulith-events-mongodb` | Persistent event publication tracking through MongoDB |
 | `modulith-test` | Module-focused test harness and architecture assertions |
 
 All modules use:
 
 ```text
-com.github.el211.MinecraftModulith:<artifact>:v0.2.1
+com.github.el211.MinecraftModulith:<artifact>:v0.3.0
 ```
 
-[JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.2.1)
+[JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.3.0)
 
 ## Quick start
 
@@ -264,6 +272,60 @@ Incomplete publications can be queried with:
 registry.incomplete();
 ```
 
+## JDBC publication registry (PostgreSQL, MySQL, MariaDB, …)
+
+The `modulith-events-jdbc` module works with any JDBC-compatible database. Add your driver
+as a runtime dependency and pass any `javax.sql.DataSource` to the registry.
+
+```kotlin
+// build.gradle.kts — example with PostgreSQL
+implementation("com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.3.0")
+runtimeOnly("org.postgresql:postgresql:42.7.4")
+```
+
+```java
+// Minimal setup with a plain DriverManager DataSource
+PGSimpleDataSource dataSource = new PGSimpleDataSource();
+dataSource.setURL("jdbc:postgresql://localhost:5432/myplugin");
+dataSource.setUser("user");
+dataSource.setPassword("secret");
+
+var registry = new JdbcEventPublicationRegistry(dataSource);
+
+modulith = PaperModulith.builder(plugin)
+    .basePackage("dev.example.plugin")
+    .publicationRegistry(registry)
+    .start();
+```
+
+The schema (`modulith_event_publication`) is created automatically on first use.
+Use a connection pool such as HikariCP for production workloads.
+
+## MongoDB publication registry
+
+The `modulith-events-mongodb` module stores event publications in a MongoDB collection.
+
+```kotlin
+// build.gradle.kts
+implementation("com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.3.0")
+```
+
+```java
+MongoClient client = MongoClients.create("mongodb://localhost:27017");
+MongoCollection<Document> collection = client
+    .getDatabase("myplugin")
+    .getCollection("modulith_event_publication");
+
+var registry = new MongoEventPublicationRegistry(collection);
+
+modulith = PaperModulith.builder(plugin)
+    .basePackage("dev.example.plugin")
+    .publicationRegistry(registry)
+    .start();
+```
+
+An index on the `status` field is created automatically on construction.
+
 ## Module configuration
 
 Modules can opt into their own YAML configuration:
@@ -402,6 +464,8 @@ ModuleAssertions.assertMermaidContains(runtime, "homes");
 | Async event delivery | ✅ |
 | Event completion policies | ✅ |
 | SQLite publication tracking | ✅ |
+| JDBC publication tracking (PostgreSQL, MySQL, MariaDB, …) | ✅ |
+| MongoDB publication tracking | ✅ |
 | Paper integration | ✅ |
 | Folia-aware scheduling | ✅ |
 | Module-owned commands | ✅ |
@@ -413,12 +477,14 @@ ModuleAssertions.assertMermaidContains(runtime, "homes");
 ## Project structure
 
 ```text
-modulith-core/           Core module runtime
-modulith-processor/      Compile-time architecture validator
-modulith-events-sqlite/  SQLite publication registry
-modulith-paper/          Paper + Folia integration
-modulith-test/           Testing utilities
-example-plugin/          Example implementation
+modulith-core/            Core module runtime
+modulith-processor/       Compile-time architecture validator
+modulith-events-sqlite/   SQLite publication registry
+modulith-events-jdbc/     JDBC publication registry (PostgreSQL, MySQL, MariaDB, …)
+modulith-events-mongodb/  MongoDB publication registry
+modulith-paper/           Paper + Folia integration
+modulith-test/            Testing utilities
+example-plugin/           Example implementation
 ```
 
 ## Requirements
@@ -427,6 +493,8 @@ example-plugin/          Example implementation
 - Gradle 8+ / wrapper included
 - Paper 1.21.x for `modulith-paper`
 - SQLite JDBC only when using `modulith-events-sqlite`
+- Any JDBC driver when using `modulith-events-jdbc` (PostgreSQL, MySQL, MariaDB, etc.)
+- MongoDB Java driver 5.x included when using `modulith-events-mongodb`
 
 Default Paper API:
 
@@ -453,7 +521,7 @@ To publish all library modules to your local Maven repository:
 Current release:
 
 ```text
-v0.2.1
+v0.3.0
 ```
 
 ## License
