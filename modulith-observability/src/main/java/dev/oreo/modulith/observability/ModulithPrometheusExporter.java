@@ -17,7 +17,7 @@ public final class ModulithPrometheusExporter {
         line(text, "minecraft_modulith_listener_completions_total", snapshot.listenerCompletions());
         line(text, "minecraft_modulith_listener_failures_total", snapshot.listenerFailures());
         line(text, "minecraft_modulith_incomplete_publications",
-                runtime.diagnostics().incompletePublications());
+                runtime.diagnostics().incompleteEventPublications());
         snapshot.moduleStarts().forEach((module, count) ->
                 text.append("minecraft_modulith_module_starts_total{module=\"")
                         .append(escape(module)).append("\"} ").append(count).append('\n'));
