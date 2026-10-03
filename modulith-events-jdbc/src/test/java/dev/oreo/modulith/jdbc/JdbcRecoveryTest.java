@@ -1,16 +1,19 @@
 package dev.oreo.modulith.jdbc;
 
 import dev.oreo.modulith.core.*;
-import org.h2.jdbcx.JdbcDataSource;
+import org.sqlite.SQLiteDataSource;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JdbcRecoveryTest {
+    @TempDir Path directory;
     @Test void transactionBoundEnqueueAndDurableRetries() throws Exception {
-        JdbcDataSource source = new JdbcDataSource();
-        source.setURL("jdbc:h2:mem:modulith_tx;DB_CLOSE_DELAY=-1");
+        SQLiteDataSource source = new SQLiteDataSource();
+        source.setUrl("jdbc:sqlite:" + directory.resolve("modulith-tx.db").toAbsolutePath());
         JdbcEventPublicationRegistry registry = new JdbcEventPublicationRegistry(source);
 
         try (Connection tx = source.getConnection()) {
