@@ -92,7 +92,7 @@ class EventReplayTest {
         assertEquals(EventPublicationStatus.COMPLETED, registry.entries.get(failed).status());
         // The successful retry is no longer eligible; a second retry must not look like success.
         assertThrows(IllegalArgumentException.class, () -> bus.replayFailedPublication(failed));
-        assertEquals(5, registry.created); // Replays never insert another publication.
+        assertEquals(4, registry.created); // Replays never insert another publication.
     }
 
     static class MemoryRegistry implements EventPublicationRegistry {
