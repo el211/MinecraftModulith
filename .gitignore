@@ -5,4 +5,3 @@ build/
 *.iml
 out/
 .DS_Store
-gradle.properties
