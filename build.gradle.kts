@@ -20,6 +20,26 @@ subprojects {
                     from(components["java"])
                 }
             }
+
+            repositories {
+                maven {
+                    name = "oreostudios"
+                    url = uri(
+                        if (version.toString().endsWith("-SNAPSHOT"))
+                            "https://maven.oreostudios.fr/snapshots"
+                        else
+                            "https://maven.oreostudios.fr/releases"
+                    )
+                    credentials {
+                        username = providers.gradleProperty("oreostudiosUsername")
+                            .orElse(providers.environmentVariable("MAVEN_USERNAME"))
+                            .orNull
+                        password = providers.gradleProperty("oreostudiosPassword")
+                            .orElse(providers.environmentVariable("MAVEN_PASSWORD"))
+                            .orNull
+                    }
+                }
+            }
         }
     }
 
