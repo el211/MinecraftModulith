@@ -23,7 +23,7 @@ public final class EventRetryCoordinator {
         Objects.requireNonNull(now);
         if (batchSize < 0) throw new IllegalArgumentException("batchSize must be >= 0");
         int retried = 0, dead = 0, deferred = 0, unavailable = 0, seen = 0;
-        for (EventPublication publication : registry.failed()) {
+        for (EventPublication publication : registry.failed(batchSize)) {
             if (seen++ >= batchSize) break;
             int count = registry.retryCount(publication.id());
             if (count >= policy.maxRetries()) {

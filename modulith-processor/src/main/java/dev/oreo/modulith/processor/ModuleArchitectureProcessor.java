@@ -13,6 +13,7 @@ import dev.oreo.modulith.core.PluginModule;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
+import javax.annotation.processing.FilerException;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
@@ -23,9 +24,11 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
+import java.io.BufferedReader;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -56,12 +59,17 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
     private final Set<String> scannedUnits = new HashSet<>();
     private final Set<String> reported = new HashSet<>();
     private final Map<String, Set<String>> exportedApis = new HashMap<>();
+    private final Set<String> generatedAnchors = new HashSet<>();
+    /** Previous index allows incremental compilation when a dependency's package-info is unchanged. */
+    private final Map<String, String> previousMetadata = new LinkedHashMap<>();
     private boolean metadataWritten;
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         trees = Trees.instance(processingEnv);
+        readPreviousMetadata(StandardLocation.CLASS_OUTPUT);
+        readPreviousMetadata(StandardLocation.CLASS_PATH);
     }
 
     @Override
@@ -126,11 +134,14 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 error(pkg, "@ApplicationModule id must be a non-blank alphanumeric identifier");
                 continue;
             }
-            if (modulesByPackage.containsKey(packageName)) {
+            String generated = packageName + ".__MinecraftModulithModule";
+            ModuleInfo existing = modulesByPackage.get(packageName);
+            if (existing != null) {
+                // The generated anchor causes a second annotation-processing round.
+                if (existing.className().equals(generated)) continue;
                 error(pkg, "Do not declare both @PluginModule and @ApplicationModule in " + packageName);
                 continue;
             }
-            String generated = packageName + ".__MinecraftModulithModule";
             ModuleInfo info = new ModuleInfo(id, packageName, generated,
                     List.of(annotation.allowedDependencies()), annotation.configuration(), pkg);
             ModuleInfo previous = modulesById.putIfAbsent(id, info);
@@ -139,6 +150,7 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 continue;
             }
             modulesByPackage.put(packageName, info);
+            if (!generatedAnchors.add(generated)) continue;
             try {
                 var file = processingEnv.getFiler().createSourceFile(generated, pkg);
                 try (Writer writer = file.openWriter()) {
@@ -152,6 +164,10 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                     writer.write("public final class __MinecraftModulithModule implements " +
                             "dev.oreo.modulith.core.MinecraftModule {}\n");
                 }
+            } catch (FilerException alreadyGenerated) {
+                // An incremental compilation may retain the prior generated anchor.
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "Module anchor already generated: " + generated);
             } catch (IOException ex) {
                 error(pkg, "Could not generate module anchor: " + ex.getMessage());
             }
@@ -215,14 +231,19 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 }
                 if (targetId.isBlank()) {
                     error(module.element(), "Invalid dependency selector '" + raw + "'");
-                } else if (!modulesById.containsKey(targetId)) {
+                } else if (!modulesById.containsKey(targetId) &&
+                        !previousMetadata.containsKey(targetId)) {
                     error(module.element(), "Module '" + module.id() + "' depends on missing module '" + targetId + "'");
                 } else if (delimiter >= 0) {
                     String selectedApi = raw.substring(delimiter + 2).trim();
-                    if (!selectedApi.isEmpty() &&
-                            !exportedApis.getOrDefault(targetId, Set.of()).contains(selectedApi)) {
+                    Set<String> discovered = exportedApis.get(targetId);
+                    // In incremental compiles unchanged API packages do not enter the current
+                    // round. Only reject a selector when this compilation has positive
+                    // knowledge of the target module's exported names.
+                    if (discovered != null && !discovered.isEmpty() &&
+                            !discovered.contains(selectedApi)) {
                         error(module.element(), "Module '" + module.id() + "' depends on unknown named API '" +
-                                raw + "'. Available: " + exportedApis.getOrDefault(targetId, Set.of()));
+                                raw + "'. Available: " + discovered);
                     }
                 }
             }
@@ -348,8 +369,26 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         trees.printMessage(Diagnostic.Kind.ERROR, message, path.getLeaf(), path.getCompilationUnit());
     }
 
+    private void readPreviousMetadata(StandardLocation location) {
+        try {
+            FileObject file = processingEnv.getFiler().getResource(
+                    location, "", "META-INF/minecraft-modulith/modules.idx");
+            try (BufferedReader reader = new BufferedReader(file.openReader(true))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String[] columns = line.split("\\|", -1);
+                    if (columns.length == 4 && !columns[0].isBlank()) {
+                        previousMetadata.putIfAbsent(columns[0], line);
+                    }
+                }
+            }
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Clean build or no previous module index on the classpath.
+        }
+    }
+
     private void writeMetadata() {
-        if (modulesById.isEmpty()) {
+        if (modulesById.isEmpty() && previousMetadata.isEmpty()) {
             return;
         }
         try {
@@ -369,6 +408,12 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                     writer.write("|");
                     writer.write(Boolean.toString(info.configuration()));
                     writer.write(System.lineSeparator());
+                }
+                for (var entry : previousMetadata.entrySet()) {
+                    if (!modulesById.containsKey(entry.getKey())) {
+                        writer.write(entry.getValue());
+                        writer.write(System.lineSeparator());
+                    }
                 }
             }
         } catch (IOException exception) {

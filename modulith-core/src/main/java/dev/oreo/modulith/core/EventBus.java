@@ -245,7 +245,7 @@ public final class EventBus {
         if (!(serializer instanceof EventPayloadCodec codec)) {
             throw new ModulithException("Event recovery requires an EventPayloadCodec with deserialization");
         }
-        return replay(registry.incomplete(), limit, codec);
+        return replay(registry.incomplete(limit), limit, codec);
     }
 
     /** Explicitly retry previously failed listener deliveries (at least once). */
@@ -254,7 +254,7 @@ public final class EventBus {
         if (!(serializer instanceof EventPayloadCodec codec)) {
             throw new ModulithException("Event retry requires an EventPayloadCodec");
         }
-        return replay(registry.failed(), limit, codec);
+        return replay(registry.failed(limit), limit, codec);
     }
 
     /** Retries one exact failed publication without generating an extra record. */
@@ -263,8 +263,7 @@ public final class EventBus {
         if (!(serializer instanceof EventPayloadCodec codec)) {
             throw new ModulithException("Event retry requires an EventPayloadCodec");
         }
-        return replay(registry.failed().stream()
-                .filter(pub -> pub.id().equals(publicationId)).toList(), 1, codec);
+        return replay(registry.failed(publicationId).stream().toList(), 1, codec);
     }
 
     /** Quarantines a permanently failing publication if supported by the persistence adapter. */
@@ -277,12 +276,16 @@ public final class EventBus {
         int recovered = 0, failed = 0, unavailable = 0;
         for (int i = 0; i < Math.min(limit, publications.size()); i++) {
             EventPublication publication = publications.get(i);
-            Handler handler = handlers.values().stream().flatMap(List::stream)
-                    .filter(h -> h.id().equals(publication.listenerId()))
+            var target = handlers.entrySet().stream()
+                    .filter(entry -> entry.getValue().stream()
+                            .anyMatch(handler -> handler.id().equals(publication.listenerId())))
                     .findFirst().orElse(null);
-            if (handler == null) { unavailable++; continue; }
+            if (target == null) { unavailable++; continue; }
+            Handler handler = target.getValue().stream()
+                    .filter(candidate -> candidate.id().equals(publication.listenerId()))
+                    .findFirst().orElseThrow();
             try {
-                Object event = codec.deserialize(publication.eventType(), publication.payload());
+                Object event = codec.deserialize(publication.eventType(), publication.payload(), target.getKey());
                 // Reuse the publication ID so replay never inserts a second pending record.
                 invokeExisting(handler, event, publication.id()).toCompletableFuture().join();
                 recovered++;
