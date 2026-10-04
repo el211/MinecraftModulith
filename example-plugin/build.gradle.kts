@@ -3,6 +3,8 @@ val paperApiVersion: String by project
 dependencies {
     implementation(project(":modulith-paper"))
     implementation(project(":modulith-events-sqlite"))
+    implementation(project(":modulith-events-jdbc"))
+    implementation(project(":modulith-events-mongodb"))
     annotationProcessor(project(":modulith-processor"))
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
 }
