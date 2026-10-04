@@ -237,10 +237,11 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 } else if (delimiter >= 0) {
                     String selectedApi = raw.substring(delimiter + 2).trim();
                     Set<String> discovered = exportedApis.get(targetId);
-                    // In incremental compiles unchanged API packages do not enter the current
-                    // round. Only reject a selector when this compilation has positive
-                    // knowledge of the target module's exported names.
-                    if (discovered != null && !discovered.isEmpty() &&
+                    // Incremental javac may process only a subset of package-info files
+                    // for a previously compiled module. Even a non-empty discovered set
+                    // can be incomplete, so check unknown names only on a clean build.
+                    if (!previousMetadata.containsKey(targetId) &&
+                            discovered != null && !discovered.isEmpty() &&
                             !discovered.contains(selectedApi)) {
                         error(module.element(), "Module '" + module.id() + "' depends on unknown named API '" +
                                 raw + "'. Available: " + discovered);

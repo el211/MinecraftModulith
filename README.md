@@ -472,6 +472,10 @@ Use `@ModuleComponent` for constructor-injected components and `@Inject` to sele
 when the component has multiple constructors. Public cross-module interfaces need `@ModuleApi`
 or a named-interface package; all cross-module service lookup still checks declared dependencies.
 
+The processor reuses prior `modules.idx` metadata during incremental builds and conservatively
+defers unknown named-interface checks when the target module has previously compiled.
+Run a **clean** architecture build for complete selector validation.
+
 ### Recovery, configuration and scheduling
 
 `EventPayloadCodec` adds payload deserialization, allowing explicit at-least-once replay

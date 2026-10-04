@@ -28,6 +28,11 @@ class PackageModuleProcessorTest {
                 package example.economy.api;
                 public interface Payments { long amount(); }
                 """);
+        Path economy = input.resolve("example/economy/package-info.java");
+        Path audit = source(input, "example/economy/audit/package-info.java", """
+                @dev.oreo.modulith.core.NamedInterface("audit")
+                package example.economy.audit;
+                """);
         Path homes = source(input, "example/homes/package-info.java", """
                 @dev.oreo.modulith.core.ApplicationModule(
                     id="homes", allowedDependencies={"economy::payments"})
@@ -42,7 +47,7 @@ class PackageModuleProcessorTest {
         List<Path> all = List.of(
                 input.resolve("example/economy/package-info.java"),
                 input.resolve("example/economy/api/package-info.java"),
-                input.resolve("example/economy/api/Payments.java"), homes, homeType);
+                input.resolve("example/economy/api/Payments.java"), audit, homes, homeType);
         compile(first, null, all);
         assertTrue(Files.exists(first.resolve("example/economy/__MinecraftModulithModule.class")));
         assertTrue(Files.exists(first.resolve("example/homes/__MinecraftModulithModule.class")));
@@ -57,6 +62,13 @@ class PackageModuleProcessorTest {
         String index = Files.readString(second.resolve("META-INF/minecraft-modulith/modules.idx"));
         assertTrue(index.contains("economy|"), index);
         assertTrue(index.contains("homes|"), index);
+
+        // A more subtle partial rebuild DOES process economy, but only its 'audit'
+        // named interface. Its unchanged 'payments' interface is deliberately absent.
+        // An incomplete exportedApis map must not reject homes -> economy::payments.
+        Path third = temp.resolve("classes3");
+        compile(third, first, List.of(economy, audit, homes, homeType));
+        assertTrue(Files.exists(third.resolve("example/homes/__MinecraftModulithModule.class")));
     }
 
     private Path source(Path base, String name, String body) throws Exception {
