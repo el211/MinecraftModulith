@@ -7,9 +7,9 @@
 
 **Spring Modulith-inspired architecture for modern Minecraft plugins.**
 
-MinecraftModulith helps you build large Paper/Folia plugins as a set of explicit, testable modules instead of one tightly coupled codebase. It provides module boundaries, named APIs, dependency validation, lifecycle management, events, diagnostics, configuration, scheduling adapters, and test utilities while still producing a normal Minecraft plugin.
+MinecraftModulith helps you build large Paper/Folia plugins as a set of explicit, testable modules instead of one tightly coupled codebase. It provides module boundaries, named APIs, dependency validation, lifecycle management, constructor injection, events, event recovery and retry, diagnostics, typed configuration, scheduling adapters, observability, and test utilities while still producing a normal Minecraft plugin.
 
-> **Current release:** `v0.3.0`  
+> **Current release:** `v0.4.0`  
 > **Java:** 21  
 > **Platform:** Paper 1.21.x + Folia-aware scheduling
 
@@ -66,25 +66,30 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.3.0")
+    implementation("com.github.el211.MinecraftModulith:modulith-paper:v0.4.0")
 
     annotationProcessor(
-        "com.github.el211.MinecraftModulith:modulith-processor:v0.3.0"
+        "com.github.el211.MinecraftModulith:modulith-processor:v0.4.0"
     )
 
     // Optional: pick one or more persistence backends
     implementation(
-        "com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.3.0"
+        "com.github.el211.MinecraftModulith:modulith-events-sqlite:v0.4.0"
     )
     implementation(
-        "com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.3.0"
+        "com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.4.0"
     )
     implementation(
-        "com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.3.0"
+        "com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.4.0"
+    )
+
+    // Optional: Prometheus / OpenTelemetry reporting
+    implementation(
+        "com.github.el211.MinecraftModulith:modulith-observability:v0.4.0"
     )
 
     testImplementation(
-        "com.github.el211.MinecraftModulith:modulith-test:v0.3.0"
+        "com.github.el211.MinecraftModulith:modulith-test:v0.4.0"
     )
 }
 ```
@@ -95,21 +100,22 @@ For platform-independent usage, use `modulith-core` instead of `modulith-paper`.
 
 | Artifact | Purpose |
 | --- | --- |
-| `modulith-core` | Platform-independent module runtime, events, services and diagnostics |
-| `modulith-paper` | Paper/Folia bootstrap, scheduler, commands and YAML configuration |
+| `modulith-core` | Platform-independent module runtime, DI, events, services and diagnostics |
+| `modulith-paper` | Paper/Folia bootstrap, scheduler, Brigadier commands and YAML configuration |
 | `modulith-processor` | Compile-time module and architecture validation |
 | `modulith-events-sqlite` | Persistent event publication tracking through SQLite |
 | `modulith-events-jdbc` | Persistent event publication tracking through any JDBC data source (PostgreSQL, MySQL, MariaDB, H2, SQL Server, …) |
 | `modulith-events-mongodb` | Persistent event publication tracking through MongoDB |
+| `modulith-observability` | Dependency-free Prometheus exposition and optional OpenTelemetry reporter |
 | `modulith-test` | Module-focused test harness and architecture assertions |
 
 All modules use:
 
 ```text
-com.github.el211.MinecraftModulith:<artifact>:v0.3.0
+com.github.el211.MinecraftModulith:<artifact>:v0.4.0
 ```
 
-[JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.3.0)
+[JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.4.0)
 
 ## Quick start
 
@@ -159,6 +165,82 @@ public final class HomesModule implements MinecraftModule {
 
 MinecraftModulith validates the declared dependency graph and keeps modules from reaching into implementation details they should not access.
 
+## Package-based module declaration
+
+As an alternative to implementing `MinecraftModule` on a class, you can declare a module directly on a package using `package-info.java`. The annotation processor generates a lifecycle anchor class automatically.
+
+```java
+// economy/package-info.java
+@ApplicationModule(id = "economy")
+package dev.example.economy;
+
+import dev.oreo.modulith.core.ApplicationModule;
+```
+
+Named interface packages replace `@ModuleApi` on individual types:
+
+```java
+// economy/api/package-info.java
+@NamedInterface("payments")
+package dev.example.economy.api;
+
+import dev.oreo.modulith.core.NamedInterface;
+```
+
+Any public type in that package is now part of the `economy::payments` contract. Other modules declare:
+
+```java
+@ApplicationModule(
+    id = "homes",
+    allowedDependencies = {"economy::payments"}
+)
+package dev.example.homes;
+```
+
+The class-based `@PluginModule` declaration continues to work and the two styles can coexist.
+
+> **Note:** Run a clean build (`./gradlew clean build`) for complete named-API selector validation.
+> Incremental builds conservatively skip unknown-API errors when the target module was previously compiled.
+
+## Constructor injection
+
+Mark module-local components with `@ModuleComponent` and MinecraftModulith will construct them
+via their public constructor, resolving dependencies from the module's service registry.
+
+```java
+@ModuleComponent
+public final class HomeRepository {
+    private final EconomyService economy;
+
+    // Single public constructor — injected automatically.
+    public HomeRepository(EconomyService economy) {
+        this.economy = economy;
+    }
+}
+```
+
+When a component has more than one constructor, annotate the chosen one with `@Inject`:
+
+```java
+@ModuleComponent
+public final class HomeRepository {
+    @Inject
+    public HomeRepository(EconomyService economy) { ... }
+
+    public HomeRepository() { ... }
+}
+```
+
+Components are discovered automatically from the module's package when you call
+`basePackage(...)` on `PaperModulith.Builder`, or registered explicitly:
+
+```java
+PaperModulith.builder(this)
+    .basePackage("dev.example.plugin")
+    .component("homes", HomeRepository.class)
+    .start();
+```
+
 ## Paper bootstrap
 
 ```java
@@ -170,6 +252,7 @@ public final class MyPlugin extends JavaPlugin {
     public void onEnable() {
         modulith = PaperModulith.builder(this)
             .basePackage("dev.example.myplugin")
+            .diagnosticsCommand(true)   // enables /modulith for admins
             .start();
     }
 
@@ -193,7 +276,7 @@ The processor detects issues such as:
 - duplicate or missing module IDs
 - invalid dependency selectors
 - access to another module without a declared dependency
-- access to types that are not exposed through `@ModuleApi`
+- access to types that are not exposed through `@ModuleApi` or `@NamedInterface`
 - access to another module's `internal` package
 - invalid or non-public module API declarations
 
@@ -241,7 +324,10 @@ context.events().publish(event, EventCompletionPolicy.FIRE_AND_FORGET);
 
 ## Persistent event publications
 
-The optional `modulith-events-sqlite` module records event delivery state in SQLite.
+The optional persistence modules record event delivery state so that publications that were
+in-flight when the server stopped can be detected and replayed on restart.
+
+### SQLite
 
 ```java
 var registry = new SqliteEventPublicationRegistry(
@@ -256,58 +342,30 @@ modulith = PaperModulith.builder(plugin)
     .start();
 ```
 
-Tracked information includes:
-
-- publication UUID
-- event type
-- listener ID
-- serialized payload
-- `PENDING`, `COMPLETED`, or `FAILED`
-- publication/completion timestamps
-- failure information
-
-Incomplete publications can be queried with:
-
-```java
-registry.incomplete();
-```
-
-## JDBC publication registry (PostgreSQL, MySQL, MariaDB, …)
-
-The `modulith-events-jdbc` module works with any JDBC-compatible database. Add your driver
-as a runtime dependency and pass any `javax.sql.DataSource` to the registry.
+### JDBC (PostgreSQL, MySQL, MariaDB, …)
 
 ```kotlin
-// build.gradle.kts — example with PostgreSQL
-implementation("com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.3.0")
+// build.gradle.kts
+implementation("com.github.el211.MinecraftModulith:modulith-events-jdbc:v0.4.0")
 runtimeOnly("org.postgresql:postgresql:42.7.4")
 ```
 
 ```java
-// Minimal setup with a plain DriverManager DataSource
-PGSimpleDataSource dataSource = new PGSimpleDataSource();
-dataSource.setURL("jdbc:postgresql://localhost:5432/myplugin");
-dataSource.setUser("user");
-dataSource.setPassword("secret");
-
-var registry = new JdbcEventPublicationRegistry(dataSource);
-
-modulith = PaperModulith.builder(plugin)
-    .basePackage("dev.example.plugin")
-    .publicationRegistry(registry)
-    .start();
+HikariConfig config = new HikariConfig();
+config.setJdbcUrl("jdbc:postgresql://localhost:5432/myplugin");
+config.setUsername("user");
+config.setPassword("secret");
+var registry = new JdbcEventPublicationRegistry(new HikariDataSource(config));
 ```
 
-The schema (`modulith_event_publication`) is created automatically on first use.
-Use a connection pool such as HikariCP for production workloads.
+The schema is created automatically. `JdbcEventPublicationRegistry` also exposes
+`begin(Connection, ...)` to enqueue a publication inside a caller-managed SQL transaction.
 
-## MongoDB publication registry
-
-The `modulith-events-mongodb` module stores event publications in a MongoDB collection.
+### MongoDB
 
 ```kotlin
 // build.gradle.kts
-implementation("com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.3.0")
+implementation("com.github.el211.MinecraftModulith:modulith-events-mongodb:v0.4.0")
 ```
 
 ```java
@@ -315,20 +373,114 @@ MongoClient client = MongoClients.create("mongodb://localhost:27017");
 MongoCollection<Document> collection = client
     .getDatabase("myplugin")
     .getCollection("modulith_event_publication");
-
 var registry = new MongoEventPublicationRegistry(collection);
-
-modulith = PaperModulith.builder(plugin)
-    .basePackage("dev.example.plugin")
-    .publicationRegistry(registry)
-    .start();
 ```
 
-An index on the `status` field is created automatically on construction.
+An index on `status` is created automatically. `MongoEventPublicationRegistry` also exposes
+`begin(ClientSession, ...)` for caller-managed MongoDB transactions.
+
+### Publication statuses
+
+Every persisted delivery record moves through these states:
+
+| Status | Meaning |
+| --- | --- |
+| `PENDING` | Listener invocation has not yet completed |
+| `COMPLETED` | Listener completed successfully |
+| `FAILED` | Listener threw an exception |
+| `DEAD_LETTER` | Permanently quarantined after exceeding the retry limit |
+
+## Event recovery and retry
+
+To replay publications that were left `PENDING` after a crash, implement `EventPayloadCodec`
+so the framework can deserialize stored payloads back into event objects:
+
+```java
+public final class JsonEventCodec implements EventPayloadCodec {
+    @Override
+    public String serialize(Object event) {
+        return gson.toJson(event);
+    }
+
+    @Override
+    public <T> T deserialize(String eventType, String payload, Class<T> type) {
+        return gson.fromJson(payload, type);
+    }
+}
+```
+
+Wire it up at bootstrap and replay after all listeners have registered:
+
+```java
+modulith = PaperModulith.builder(plugin)
+    .publicationRegistry(registry)
+    .eventSerializer(new JsonEventCodec())
+    .start();
+
+// Replay incomplete publications once all modules are running.
+EventRecoveryReport report = modulith.runtime().events().replayIncomplete(100);
+```
+
+Failed publications can be retried explicitly or quarantined:
+
+```java
+modulith.runtime().events().replayFailed(50);
+modulith.runtime().events().deadLetter(publicationId, "poison message");
+```
+
+For automatic periodic retry with exponential backoff, use `EventRetryCoordinator`:
+
+```java
+EventRetryPolicy policy = new EventRetryPolicy(
+    5,                          // max retries
+    Duration.ofSeconds(30),     // initial delay
+    Duration.ofMinutes(10),     // maximum delay
+    2.0                         // backoff multiplier
+);
+
+EventRetryCoordinator coordinator = new EventRetryCoordinator(
+    modulith.runtime().events(),
+    registry,
+    policy
+);
+
+// Schedule tick() on your preferred execution context.
+paper.scheduleTimer(context, () -> {
+    EventRetryTickReport report = coordinator.tick(Instant.now(), 20);
+}, 0L, 20L * 30); // every 30 seconds
+```
+
+> **At-least-once only.** Recovery is not exactly-once. Listeners must be idempotent.
+> Run one recovery worker per registry. Distributed leases are not implemented.
+
+## Typed configuration
+
+Define a `record` annotated with `@ConfigKey` and `@ConfigRange`, then read it as an
+immutable snapshot from `ModuleConfiguration`:
+
+```java
+public record HomesSettings(
+    @ConfigKey("command-name") String commandName,
+    @ConfigKey("max-homes") @ConfigRange(min = 1, max = 100) int maxHomes
+) {}
+```
+
+```java
+@Override
+public void enable(ModuleContext context) {
+    HomesSettings settings = TypedModuleConfiguration.read(
+        context.config(), HomesSettings.class
+    );
+    int limit = settings.maxHomes();
+}
+```
+
+Validation and type conversion happen at startup; missing or out-of-range values throw
+`ModulithException` before the module finishes enabling.
 
 ## Module configuration
 
-Modules can opt into their own YAML configuration:
+Modules can opt into their own YAML configuration file:
 
 ```java
 @PluginModule(
@@ -369,7 +521,31 @@ MinecraftModulith detects Folia's global region scheduler when available and oth
 
 Scheduled tasks owned by a module are cancelled automatically when that module stops.
 
+## Folia scheduling contexts
+
+For full Folia compatibility, access explicit scheduling contexts through `ModuleScheduler`:
+
+```java
+ModuleScheduler contexts = context.platform(PaperPlatform.class).contexts();
+
+// Global context (equivalent to Folia's global region scheduler)
+contexts.global(context, this::tick);
+
+// Region context — required for world-state access on Folia
+contexts.region(context, location, this::processChunk);
+
+// Entity context — required for entity-state access on Folia
+contexts.entity(context, entity, this::moveEntity);
+
+// Async context
+contexts.async(context, this::fetchFromDatabase);
+```
+
+All returned task handles are owned by the module's lifecycle and cancelled automatically on disable.
+
 ## Module-owned commands
+
+### Legacy command registration
 
 Commands can be registered dynamically without declaring every command in `plugin.yml`.
 
@@ -384,7 +560,94 @@ paper.registerCommand(
 );
 ```
 
+### Lifecycle-based Brigadier registration
+
+Use `registerBasicCommand` to register commands through Paper's lifecycle event system.
+The command is skipped if the owning module has already been disabled:
+
+```java
+paper.registerBasicCommand(
+    context,
+    "home",
+    "Create a home",
+    List.of("h"),
+    (source, args) -> source.getSender().sendMessage("Home!")
+);
+```
+
 Registered commands are cleaned up with their owning module lifecycle.
+
+## Administrator diagnostics command
+
+Enable the built-in `/modulith` command at bootstrap. Access requires the
+`minecraftmodulith.admin` permission:
+
+```java
+PaperModulith.builder(this)
+    .basePackage("dev.example.myplugin")
+    .diagnosticsCommand(true)
+    .start();
+```
+
+| Subcommand | Output |
+| --- | --- |
+| `/modulith modules` | All module IDs and their current state |
+| `/modulith events` | Published, completed, failed, and incomplete event counts |
+| `/modulith graph` | Mermaid module dependency graph sent to the sender |
+
+## Observability
+
+`modulith-observability` provides pull-based Prometheus text exposition and an optional
+OpenTelemetry push adapter with no mandatory runtime dependencies.
+
+### Prometheus
+
+```java
+// In your HTTP handler or metrics endpoint:
+String metrics = ModulithPrometheusExporter.render(modulith.runtime());
+```
+
+Exposed metrics include event publication counts, listener invocation/completion/failure counts,
+incomplete publication count, and per-module start/stop counters and startup durations.
+
+### OpenTelemetry
+
+```java
+Meter meter = openTelemetrySdk.getMeter("dev.example.myplugin");
+OpenTelemetryModulithReporter reporter = new OpenTelemetryModulithReporter(meter);
+
+// Call periodically on any thread — synchronized internally.
+paper.scheduleTimer(context, () -> reporter.collect(modulith.runtime()), 0L, 20L * 60);
+```
+
+The reporter uses delta counters to avoid double-counting on repeated `collect()` calls.
+
+## ServiceLoader contributors
+
+If your project distributes modules across multiple JARs, implement `ModuleContributor` to
+expose them through the Java ServiceLoader:
+
+```java
+// In a separate library JAR:
+public final class EconomyContributor implements ModuleContributor {
+    @Override
+    public Collection<Class<? extends MinecraftModule>> modules() {
+        return List.of(EconomyModule.class);
+    }
+}
+```
+
+Register it in `META-INF/services/dev.oreo.modulith.core.ModuleContributor`, then enable
+discovery at bootstrap:
+
+```java
+PaperModulith.builder(this)
+    .discoverContributors(true)
+    .start();
+```
+
+> A dedicated cross-plugin classloader bridge is not implied. Contributors are intended for
+> modules co-deployed in the same JAR or on the same classloader.
 
 ## Dependency graph export
 
@@ -444,71 +707,10 @@ try (ModuleTestHarness harness = ModuleTestHarness.builder()
 }
 ```
 
-Architecture helpers are also available:
+### JUnit 5 annotation
 
-```java
-ModuleAssertions.assertValidArchitecture(modules);
-ModuleAssertions.assertMermaidContains(runtime, "homes");
-```
-
-## Experimental next-generation APIs (feature branch)
-
-These APIs are being developed on `feat/modulith-architecture-and-runtime` and are not part
-of the published v0.3.0 artifact. The original class-based module declaration remains supported.
-
-### Package-based module declaration
-
-Use `package-info.java` to declare a package module. Annotation processing generates
-a `__MinecraftModulithModule` lifecycle anchor, which Paper's normal discovery can load:
-
-```java
-@ApplicationModule(id = "homes", allowedDependencies = {"economy::payments"})
-package dev.example.homes;
-import dev.oreo.modulith.core.ApplicationModule;
-```
-
-Named interfaces can be declared with `@NamedInterface("payments")` on an API package.
-Use `@ModuleComponent` for constructor-injected components and `@Inject` to select a constructor
-when the component has multiple constructors. Public cross-module interfaces need `@ModuleApi`
-or a named-interface package; all cross-module service lookup still checks declared dependencies.
-
-The processor reuses prior `modules.idx` metadata during incremental builds and conservatively
-defers unknown named-interface checks when the target module has previously compiled.
-Run a **clean** architecture build for complete selector validation.
-
-### Recovery, configuration and scheduling
-
-`EventPayloadCodec` adds payload deserialization, allowing explicit at-least-once replay
-of pending events through `events.replayIncomplete(limit)`. Call only after listeners
-have registered and only from a single recovery worker for a given publication registry.
-Handlers must be idempotent. Failed publications can be retried explicitly via
-`events.replayFailed(limit)` or quarantined with `events.deadLetter(id, reason)`.
-The SQLite, JDBC and MongoDB adapters support separate FAILED and DEAD_LETTER states.
-JDBC also offers `begin(Connection, type, listener, payload)` for caller-managed SQL
-transactions; MongoDB offers `begin(ClientSession, type, listener, payload)` for
-caller-managed Mongo transactions. Both defer commit control to the application.
-Use the single-worker `EventRetryCoordinator` to periodically process FAILED records with
-persisted retry counts, exponential backoff and a bounded dead-letter threshold. Schedule
-`tick(now, batchSize)` on the correct platform execution context for your listeners.
-Attempts are stored in a separate SQL retry table or MongoDB document field; existing
-publication tables do not require destructive migration. **Multi-instance leases and
-exactly-once delivery are not implemented**, so use one recovery worker per registry.
-
-`context.config(MySettings.class)` reads a typed immutable record snapshot and supports
-`@ConfigKey` and `@ConfigRange`.
-
-`context.platform(PaperPlatform.class).contexts()` exposes global, entity, region and
-async scheduling. Folia entity/region operations should use their own execution context.
-All returned task handles belong to their module's lifecycle.
-
-### Optional administrator diagnostics
-
-Enable `diagnosticsCommand(true)` on `PaperModulith.Builder` to register Paper's
-lifecycle-based `/modulith modules|events|graph` command. Access requires
-`minecraftmodulith.admin`. The separate observability artifact offers
-dependency-free Prometheus exposition and an opt-in OpenTelemetry reporter.
-
-### JUnit module tests
+Use `@MinecraftModuleTest` to start modules once per test class and inject them as
+parameters. The harness is closed automatically after all tests in the class finish.
 
 ```java
 @MinecraftModuleTest(
@@ -516,25 +718,66 @@ dependency-free Prometheus exposition and an opt-in OpenTelemetry reporter.
     modules = {EconomyModule.class, HomesModule.class}
 )
 class HomesModuleTest {
+
     @Test
-    void startsOnlyRequiredModules(ModuleTestHarness harness) {
+    void startsRequiredModules(ModuleTestHarness harness, ModuleRuntime runtime) {
         harness.assertRunning("economy").assertRunning("homes");
+        assertEquals(2, runtime.modules().size());
+    }
+
+    @Test
+    void diagnosticsReflectRunningState(RuntimeDiagnostics diagnostics) {
+        assertEquals(ModuleState.RUNNING, diagnostics.states().get("homes"));
     }
 }
 ```
 
-### Gradle plugin (experimental)
+Supported injection types: `ModuleTestHarness`, `ModuleRuntime`, `EventBus`, `RuntimeDiagnostics`.
 
-`modulith-gradle-plugin` adds `verifyModulith`, `modulithDocs`,
-`modulithGraph` and `modulithTest`. It consumes processor-generated metadata;
-projects without module metadata fail `verifyModulith` intentionally.
+### Architecture helpers
+
+```java
+ModuleAssertions.assertValidArchitecture(modules);
+ModuleAssertions.assertMermaidContains(runtime, "homes");
+```
+
+## Gradle plugin
+
+`modulith-gradle-plugin` adds build tasks that consume the processor-generated `modules.idx`
+metadata file.
+
+```kotlin
+// settings.gradle.kts
+pluginManagement {
+    repositories { maven("https://jitpack.io") }
+}
+```
+
+```kotlin
+// build.gradle.kts
+plugins {
+    id("dev.oreo.modulith") version "v0.4.0"
+}
+```
+
+| Task | Description |
+| --- | --- |
+| `verifyModulith` | Validates the module metadata file; fails if no modules were found |
+| `modulithDocs` | Generates `build/reports/modulith/modules.md` and `modules.mmd` |
+| `modulithGraph` | Depends on `modulithDocs`; entry point for graph generation |
+| `modulithTest` | Alias for `test`; groups module-focused test runs |
+
+Projects without `modulith-processor` on the annotation processor classpath will fail
+`verifyModulith` intentionally.
 
 ## Feature overview
 
 | Feature | MinecraftModulith |
 | --- | :---: |
 | Explicit plugin modules | ✅ |
-| Named public APIs | ✅ |
+| Package-based module declaration | ✅ |
+| Named public APIs (`@ModuleApi` / `@NamedInterface`) | ✅ |
+| Constructor injection (`@ModuleComponent`) | ✅ |
 | Compile-time architecture validation | ✅ |
 | Runtime dependency validation | ✅ |
 | Deterministic lifecycle ordering | ✅ |
@@ -544,23 +787,36 @@ projects without module metadata fail `verifyModulith` intentionally.
 | SQLite publication tracking | ✅ |
 | JDBC publication tracking (PostgreSQL, MySQL, MariaDB, …) | ✅ |
 | MongoDB publication tracking | ✅ |
+| Event recovery and at-least-once replay | ✅ |
+| Automatic retry with exponential backoff | ✅ |
+| Dead-letter quarantine | ✅ |
+| Typed record configuration (`@ConfigKey` / `@ConfigRange`) | ✅ |
 | Paper integration | ✅ |
 | Folia-aware scheduling | ✅ |
-| Module-owned commands | ✅ |
+| Explicit Folia region / entity scheduling contexts | ✅ |
+| Module-owned commands (legacy + Brigadier) | ✅ |
+| Built-in admin diagnostics command | ✅ |
 | Per-module YAML configuration | ✅ |
 | Mermaid/Graphviz export | ✅ |
 | Runtime metrics & diagnostics | ✅ |
+| Prometheus exposition | ✅ |
+| OpenTelemetry reporter | ✅ |
+| ServiceLoader module contributors | ✅ |
 | Module-focused test harness | ✅ |
+| JUnit 5 `@MinecraftModuleTest` extension | ✅ |
+| Gradle verification and docs tasks | ✅ |
 
 ## Project structure
 
 ```text
-modulith-core/            Core module runtime
+modulith-core/            Core module runtime, DI, events, services
 modulith-processor/       Compile-time architecture validator
 modulith-events-sqlite/   SQLite publication registry
 modulith-events-jdbc/     JDBC publication registry (PostgreSQL, MySQL, MariaDB, …)
 modulith-events-mongodb/  MongoDB publication registry
 modulith-paper/           Paper + Folia integration
+modulith-observability/   Prometheus and OpenTelemetry adapters
+modulith-gradle-plugin/   Gradle verification and docs tasks
 modulith-test/            Testing utilities
 example-plugin/           Example implementation
 ```
@@ -570,9 +826,10 @@ example-plugin/           Example implementation
 - Java 21
 - Gradle 8+ / wrapper included
 - Paper 1.21.x for `modulith-paper`
-- SQLite JDBC only when using `modulith-events-sqlite`
+- SQLite JDBC bundled when using `modulith-events-sqlite`
 - Any JDBC driver when using `modulith-events-jdbc` (PostgreSQL, MySQL, MariaDB, etc.)
-- MongoDB Java driver 5.x included when using `modulith-events-mongodb`
+- MongoDB Java driver 5.x bundled when using `modulith-events-mongodb`
+- OpenTelemetry API on the classpath when using `OpenTelemetryModulithReporter`
 
 Default Paper API:
 
@@ -599,7 +856,7 @@ To publish all library modules to your local Maven repository:
 Current release:
 
 ```text
-v0.3.0
+v0.4.0
 ```
 
 ## License
