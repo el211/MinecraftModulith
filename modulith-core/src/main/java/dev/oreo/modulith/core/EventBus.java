@@ -257,13 +257,21 @@ public final class EventBus {
         return replay(registry.failed(limit), limit, codec);
     }
 
-    /** Retries one exact failed publication without generating an extra record. */
+    /**
+     * Retries one exact failed publication without generating another record.
+     *
+     * @throws IllegalArgumentException if the ID is unknown or its publication is
+     *         no longer FAILED (e.g. already completed or moved to DEAD_LETTER)
+     */
     public EventRecoveryReport replayFailedPublication(UUID publicationId) {
-        Objects.requireNonNull(publicationId);
+        Objects.requireNonNull(publicationId, "publicationId");
+        EventPublication publication = registry.failed(publicationId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No FAILED event publication found for ID " + publicationId));
         if (!(serializer instanceof EventPayloadCodec codec)) {
             throw new ModulithException("Event retry requires an EventPayloadCodec");
         }
-        return replay(registry.failed(publicationId).stream().toList(), 1, codec);
+        return replay(List.of(publication), 1, codec);
     }
 
     /** Quarantines a permanently failing publication if supported by the persistence adapter. */

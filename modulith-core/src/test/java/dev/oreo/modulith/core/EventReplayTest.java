@@ -52,6 +52,49 @@ class EventReplayTest {
         assertThrows(IllegalArgumentException.class, () -> registry.incomplete(-1));
     }
 
+    @Test void replayFailedPublicationRejectsUnknownOrNonFailedIds() {
+        MemoryRegistry registry = new MemoryRegistry();
+        EventPayloadCodec codec = new EventPayloadCodec() {
+            public String serialize(Object event) { return ((Notice) event).text(); }
+            public Object deserialize(String type, String payload) {
+                return new Notice(payload);
+            }
+        };
+        EventBus bus = new EventBus(Runnable::run, registry, codec, new ModulithMetrics());
+        AtomicInteger deliveries = new AtomicInteger();
+        bus.subscribe(Notice.class, "test.failed-id", EventDelivery.SYNC,
+                notice -> deliveries.incrementAndGet());
+
+        UUID missing = UUID.randomUUID();
+        IllegalArgumentException unknown = assertThrows(IllegalArgumentException.class,
+                () -> bus.replayFailedPublication(missing));
+        assertTrue(unknown.getMessage().contains(missing.toString()));
+        assertEquals(0, deliveries.get());
+
+        UUID pending = registry.begin(Notice.class.getName(), "test.failed-id", "pending").id();
+        assertThrows(IllegalArgumentException.class, () -> bus.replayFailedPublication(pending));
+
+        UUID completed = registry.begin(Notice.class.getName(), "test.failed-id", "done").id();
+        registry.complete(completed);
+        assertThrows(IllegalArgumentException.class, () -> bus.replayFailedPublication(completed));
+
+        UUID deadLettered = registry.begin(Notice.class.getName(), "test.failed-id", "poison").id();
+        registry.fail(deadLettered, "poison");
+        registry.deadLetter(deadLettered, "maximum retries exceeded");
+        assertThrows(IllegalArgumentException.class, () -> bus.replayFailedPublication(deadLettered));
+
+        UUID failed = registry.begin(Notice.class.getName(), "test.failed-id", "retry").id();
+        registry.fail(failed, "transient failure");
+        EventRecoveryReport result = bus.replayFailedPublication(failed);
+        assertEquals(1, result.recovered());
+        assertEquals(0, result.failed());
+        assertEquals(1, deliveries.get());
+        assertEquals(EventPublicationStatus.COMPLETED, registry.entries.get(failed).status());
+        // The successful retry is no longer eligible; a second retry must not look like success.
+        assertThrows(IllegalArgumentException.class, () -> bus.replayFailedPublication(failed));
+        assertEquals(5, registry.created); // Replays never insert another publication.
+    }
+
     static class MemoryRegistry implements EventPublicationRegistry {
         Map<UUID, EventPublication> entries = new LinkedHashMap<>();
         int created;
@@ -74,6 +117,16 @@ class EventReplayTest {
         }
         public List<EventPublication> incomplete() {
             return entries.values().stream().filter(e -> e.status()==EventPublicationStatus.PENDING).toList();
+        }
+        @Override public List<EventPublication> failed() {
+            return entries.values().stream()
+                    .filter(e -> e.status() == EventPublicationStatus.FAILED).toList();
+        }
+        @Override public void deadLetter(UUID id, String reason) {
+            EventPublication old = entries.get(id);
+            entries.put(id, new EventPublication(id, old.eventType(), old.listenerId(),
+                    old.payload(), EventPublicationStatus.DEAD_LETTER,
+                    old.publishedAt(), Instant.now(), reason));
         }
     }
 }

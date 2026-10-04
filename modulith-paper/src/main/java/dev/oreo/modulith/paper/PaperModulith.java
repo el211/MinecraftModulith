@@ -62,13 +62,13 @@ public final class PaperModulith implements AutoCloseable {
             this.plugin = Objects.requireNonNull(plugin, "plugin");
         }
 
-        /** Discover classpath-visible module contributors through Java ServiceLoader. */
         /** Enables /modulith [modules|events|graph] for permission minecraftmodulith.admin. */
         public Builder diagnosticsCommand(boolean enabled) {
             this.diagnosticsCommand = enabled;
             return this;
         }
 
+        /** Discover classpath-visible module contributors through Java ServiceLoader. */
         public Builder discoverContributors(boolean enabled) {
             this.discoverContributors = enabled;
             return this;
