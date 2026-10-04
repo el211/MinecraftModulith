@@ -163,6 +163,43 @@ public final class MongoEventPublicationRegistry implements EventPublicationRegi
         return result == null ? 0 : result.getInteger("retry_count", 0);
     }
 
+
+    @Override
+    public List<EventPublication> incomplete(int limit) {
+        return findByStatus(EventPublicationStatus.PENDING, limit);
+    }
+
+    @Override
+    public List<EventPublication> failed(int limit) {
+        return findByStatus(EventPublicationStatus.FAILED, limit);
+    }
+
+    private List<EventPublication> findByStatus(EventPublicationStatus status, int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        // Mongo cursor.limit(0) means UNLIMITED, so guard it explicitly.
+        if (limit == 0) return List.of();
+        try {
+            List<EventPublication> publications = new ArrayList<>();
+            collection.find(Filters.eq("status", status.name()))
+                    .sort(Sorts.ascending("published_at"))
+                    .limit(limit)
+                    .forEach(doc -> publications.add(fromDocument(doc)));
+            return List.copyOf(publications);
+        } catch (Exception exception) {
+            throw new ModulithException("Could not query limited event publications", exception);
+        }
+    }
+
+    @Override
+    public java.util.Optional<EventPublication> failed(UUID publicationId) {
+        Objects.requireNonNull(publicationId, "publicationId");
+        Document result = collection.find(Filters.and(
+                Filters.eq("_id", publicationId.toString()),
+                Filters.eq("status", EventPublicationStatus.FAILED.name()))).first();
+        return result == null ? java.util.Optional.empty()
+                : java.util.Optional.of(fromDocument(result));
+    }
+
     /** Returns all event publications ordered by publication time. */
     public List<EventPublication> all() {
         try {

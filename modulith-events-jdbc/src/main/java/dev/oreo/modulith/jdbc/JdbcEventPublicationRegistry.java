@@ -236,6 +236,56 @@ public final class JdbcEventPublicationRegistry implements EventPublicationRegis
         }
     }
 
+
+    @Override
+    public List<EventPublication> incomplete(int limit) {
+        return findByStatus(EventPublicationStatus.PENDING, limit);
+    }
+
+    @Override
+    public List<EventPublication> failed(int limit) {
+        return findByStatus(EventPublicationStatus.FAILED, limit);
+    }
+
+    private List<EventPublication> findByStatus(EventPublicationStatus status, int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (limit == 0) return List.of();
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                     FROM modulith_event_publication
+                     WHERE status = ? ORDER BY published_at ASC LIMIT ?
+                     """)) {
+            statement.setString(1, status.name());
+            statement.setInt(2, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) publications.add(fromRow(result));
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query limited event publications", exception);
+        }
+    }
+
+    @Override
+    public java.util.Optional<EventPublication> failed(UUID publicationId) {
+        Objects.requireNonNull(publicationId, "publicationId");
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                     FROM modulith_event_publication WHERE id = ? AND status = ?
+                     """)) {
+            statement.setString(1, publicationId.toString());
+            statement.setString(2, EventPublicationStatus.FAILED.name());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? java.util.Optional.of(fromRow(result)) : java.util.Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not find failed event publication", exception);
+        }
+    }
+
     /** Returns all event publications ordered by publication time. */
     public List<EventPublication> all() {
         try (Connection connection = dataSource.getConnection();
