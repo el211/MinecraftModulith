@@ -54,9 +54,40 @@ That means fewer accidental dependencies, safer refactors, clearer startup order
 
 ## Installation
 
-MinecraftModulith is available through **JitPack**.
+MinecraftModulith is published to two repositories — use whichever suits your project.
 
-### Gradle Kotlin DSL
+| Repository | URL | Best for |
+| --- | --- | --- |
+| **Oreo Studios Maven** | `https://maven.oreostudios.fr/releases` | Recommended — dedicated, always up to date |
+| **JitPack** | `https://jitpack.io` | Fallback / GitHub-based builds |
+
+### Gradle Kotlin DSL — Oreo Studios Maven (recommended)
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven("https://maven.oreostudios.fr/releases")
+    maven("https://repo.papermc.io/repository/maven-public/")
+}
+
+dependencies {
+    implementation("dev.oreo.modulith:modulith-paper:0.4.0")
+
+    annotationProcessor("dev.oreo.modulith:modulith-processor:0.4.0")
+
+    // Optional: pick one or more persistence backends
+    implementation("dev.oreo.modulith:modulith-events-sqlite:0.4.0")
+    implementation("dev.oreo.modulith:modulith-events-jdbc:0.4.0")
+    implementation("dev.oreo.modulith:modulith-events-mongodb:0.4.0")
+
+    // Optional: Prometheus / OpenTelemetry reporting
+    implementation("dev.oreo.modulith:modulith-observability:0.4.0")
+
+    testImplementation("dev.oreo.modulith:modulith-test:0.4.0")
+}
+```
+
+### Gradle Kotlin DSL — JitPack (fallback)
 
 ```kotlin
 repositories {
@@ -109,13 +140,10 @@ For platform-independent usage, use `modulith-core` instead of `modulith-paper`.
 | `modulith-observability` | Dependency-free Prometheus exposition and optional OpenTelemetry reporter |
 | `modulith-test` | Module-focused test harness and architecture assertions |
 
-All modules use:
+**Oreo Studios Maven** — group `dev.oreo.modulith`, artifact `<name>`, version `0.4.0`  
+**JitPack** — group `com.github.el211.MinecraftModulith`, artifact `<name>`, version `v0.4.0`
 
-```text
-com.github.el211.MinecraftModulith:<artifact>:v0.4.0
-```
-
-[JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.4.0)
+[Oreo Studios Maven browser](https://maven.oreostudios.fr/#/) · [JitPack build page](https://jitpack.io/#el211/MinecraftModulith/v0.4.0)
 
 ## Quick start
 
