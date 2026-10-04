@@ -30,6 +30,28 @@ class EventReplayTest {
         assertTrue(registry.incomplete().isEmpty());
     }
 
+    @Test void acceptsTypeSafeCodecAndLimitsBacklog() {
+        MemoryRegistry registry = new MemoryRegistry();
+        EventPayloadCodec codec = new EventPayloadCodec() {
+            public String serialize(Object event) { return ((Notice) event).text(); }
+
+            @Override
+            public <T> T deserialize(String eventType, String payload, Class<T> expectedType) {
+                assertEquals(Notice.class.getName(), eventType);
+                return expectedType.cast(new Notice(payload));
+            }
+        };
+        EventBus bus = new EventBus(Runnable::run, registry, codec, new ModulithMetrics());
+        AtomicInteger deliveries = new AtomicInteger();
+        bus.subscribe(Notice.class, "test.typed", EventDelivery.SYNC, event -> deliveries.incrementAndGet());
+        for (int i = 0; i < 5; i++) registry.begin(Notice.class.getName(), "test.typed", "" + i);
+        assertEquals(2, bus.replayIncomplete(2).recovered());
+        assertEquals(2, deliveries.get());
+        assertEquals(3, registry.incomplete().size());
+        assertEquals(0, bus.replayIncomplete(0).recovered());
+        assertThrows(IllegalArgumentException.class, () -> registry.incomplete(-1));
+    }
+
     static class MemoryRegistry implements EventPublicationRegistry {
         Map<UUID, EventPublication> entries = new LinkedHashMap<>();
         int created;
