@@ -74,6 +74,7 @@ public final class ModuleTestHarness implements AutoCloseable {
         private final Set<Class<? extends MinecraftModule>> moduleTypes = new LinkedHashSet<>();
         private final Map<Class<?>, Object> platformServices = new LinkedHashMap<>();
         private String targetModule;
+        private final Map<String, List<Class<?>>> components = new LinkedHashMap<>();
         private Executor eventExecutor = ForkJoinPool.commonPool();
         private EventPublicationRegistry registry = EventPublicationRegistry.noop();
         private EventPayloadSerializer serializer = EventPayloadSerializer.toStringSerializer();
@@ -85,6 +86,12 @@ public final class ModuleTestHarness implements AutoCloseable {
 
         public Builder modules(Collection<Class<? extends MinecraftModule>> moduleTypes) {
             moduleTypes.forEach(this::module);
+            return this;
+        }
+
+        /** Register injectable components in the module under test. */
+        public Builder component(String moduleId, Class<?> componentType) {
+            components.computeIfAbsent(moduleId, ignored -> new java.util.ArrayList<>()).add(componentType);
             return this;
         }
 
@@ -126,6 +133,7 @@ public final class ModuleTestHarness implements AutoCloseable {
                     .logger(Logger.getLogger("MinecraftModulithTest"));
 
             platformServices.forEach((type, service) -> addPlatformService(builder, type, service));
+            components.forEach((id, types) -> types.forEach(type -> builder.component(id, type)));
             return new ModuleTestHarness(builder.start());
         }
 

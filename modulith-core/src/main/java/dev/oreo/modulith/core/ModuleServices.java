@@ -31,12 +31,13 @@ public final class ModuleServices {
         }
 
         ModuleApi api = type.getAnnotation(ModuleApi.class);
-        if (api == null) {
+        NamedInterface named = type.getPackage().getAnnotation(NamedInterface.class);
+        if (api == null && named == null) {
             throw new ModulithException(
                     "Published module service " + type.getName() + " must be annotated with @ModuleApi"
             );
         }
-        String apiName = api.value().trim();
+        String apiName = api != null ? api.value().trim() : named.value().trim();
         if (apiName.isEmpty()) {
             throw new ModulithException("@ModuleApi name cannot be blank on " + type.getName());
         }

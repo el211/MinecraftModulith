@@ -7,10 +7,13 @@ import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import dev.oreo.modulith.core.ModuleApi;
+import dev.oreo.modulith.core.ApplicationModule;
+import dev.oreo.modulith.core.NamedInterface;
 import dev.oreo.modulith.core.PluginModule;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
+import javax.annotation.processing.FilerException;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
@@ -21,9 +24,11 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
+import java.io.BufferedReader;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -42,7 +47,9 @@ import java.util.Set;
  */
 @SupportedAnnotationTypes({
         "dev.oreo.modulith.core.PluginModule",
-        "dev.oreo.modulith.core.ModuleApi"
+        "dev.oreo.modulith.core.ModuleApi",
+        "dev.oreo.modulith.core.ApplicationModule",
+        "dev.oreo.modulith.core.NamedInterface"
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class ModuleArchitectureProcessor extends AbstractProcessor {
@@ -51,17 +58,24 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
     private final Map<String, ModuleInfo> modulesByPackage = new LinkedHashMap<>();
     private final Set<String> scannedUnits = new HashSet<>();
     private final Set<String> reported = new HashSet<>();
+    private final Map<String, Set<String>> exportedApis = new HashMap<>();
+    private final Set<String> generatedAnchors = new HashSet<>();
+    /** Previous index allows incremental compilation when a dependency's package-info is unchanged. */
+    private final Map<String, String> previousMetadata = new LinkedHashMap<>();
     private boolean metadataWritten;
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         trees = Trees.instance(processingEnv);
+        readPreviousMetadata(StandardLocation.CLASS_OUTPUT);
+        readPreviousMetadata(StandardLocation.CLASS_PATH);
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         collectModules(roundEnv);
+        collectPackageModules(roundEnv);
         validateApiDeclarations(roundEnv);
 
         if (!roundEnv.processingOver()) {
@@ -76,7 +90,8 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
 
     private void collectModules(RoundEnvironment roundEnv) {
         for (Element element : roundEnv.getElementsAnnotatedWith(PluginModule.class)) {
-            if (!(element instanceof TypeElement type)) {
+            if (!(element instanceof TypeElement type) ||
+                    type.getSimpleName().contentEquals("__MinecraftModulithModule")) {
                 continue;
             }
 
@@ -108,6 +123,57 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         }
     }
 
+
+    private void collectPackageModules(RoundEnvironment roundEnv) {
+        for (Element element : roundEnv.getElementsAnnotatedWith(ApplicationModule.class)) {
+            if (!(element instanceof PackageElement pkg)) continue;
+            ApplicationModule annotation = pkg.getAnnotation(ApplicationModule.class);
+            String id = annotation.id().trim();
+            String packageName = pkg.getQualifiedName().toString();
+            if (!id.matches("[A-Za-z][A-Za-z0-9_-]*")) {
+                error(pkg, "@ApplicationModule id must be a non-blank alphanumeric identifier");
+                continue;
+            }
+            String generated = packageName + ".__MinecraftModulithModule";
+            ModuleInfo existing = modulesByPackage.get(packageName);
+            if (existing != null) {
+                // The generated anchor causes a second annotation-processing round.
+                if (existing.className().equals(generated)) continue;
+                error(pkg, "Do not declare both @PluginModule and @ApplicationModule in " + packageName);
+                continue;
+            }
+            ModuleInfo info = new ModuleInfo(id, packageName, generated,
+                    List.of(annotation.allowedDependencies()), annotation.configuration(), pkg);
+            ModuleInfo previous = modulesById.putIfAbsent(id, info);
+            if (previous != null && !previous.className().equals(generated)) {
+                error(pkg, "Duplicate MinecraftModulith module id '" + id + "'");
+                continue;
+            }
+            modulesByPackage.put(packageName, info);
+            if (!generatedAnchors.add(generated)) continue;
+            try {
+                var file = processingEnv.getFiler().createSourceFile(generated, pkg);
+                try (Writer writer = file.openWriter()) {
+                    String quoted = java.util.Arrays.stream(annotation.allowedDependencies())
+                            .map(v -> "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                            .collect(java.util.stream.Collectors.joining(", "));
+                    writer.write("package " + packageName + ";\n");
+                    writer.write("@dev.oreo.modulith.core.PluginModule(value=\"" + id +
+                            "\", dependencies={" + quoted + "}, configuration=" +
+                            annotation.configuration() + ")\n");
+                    writer.write("public final class __MinecraftModulithModule implements " +
+                            "dev.oreo.modulith.core.MinecraftModule {}\n");
+                }
+            } catch (FilerException alreadyGenerated) {
+                // An incremental compilation may retain the prior generated anchor.
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                        "Module anchor already generated: " + generated);
+            } catch (IOException ex) {
+                error(pkg, "Could not generate module anchor: " + ex.getMessage());
+            }
+        }
+    }
+
     private void validateApiDeclarations(RoundEnvironment roundEnv) {
         for (Element element : roundEnv.getElementsAnnotatedWith(ModuleApi.class)) {
             if (!(element instanceof TypeElement type)) {
@@ -127,6 +193,27 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
             if (packageName.contains(".internal") || packageName.endsWith(".internal")) {
                 error(type, "@ModuleApi cannot be declared from an internal package: " + packageName);
             }
+            ModuleInfo owner = ownerOf(packageName, modulesByPackage.values().stream()
+                    .sorted(Comparator.comparingInt((ModuleInfo info) -> info.packageName().length()).reversed())
+                    .toList());
+            if (owner != null) exportedApis.computeIfAbsent(owner.id(), ignored -> new HashSet<>()).add(apiName);
+        }
+        for (Element element : roundEnv.getElementsAnnotatedWith(NamedInterface.class)) {
+            if (!(element instanceof PackageElement pkg)) continue;
+            NamedInterface annotation = pkg.getAnnotation(NamedInterface.class);
+            String value = annotation.value().trim();
+            String packageName = pkg.getQualifiedName().toString();
+            if (value.isBlank() || value.contains("::")) {
+                error(pkg, "@NamedInterface must have a non-blank name without '::'");
+            }
+            if (packageName.contains(".internal") || packageName.endsWith(".internal")) {
+                error(pkg, "@NamedInterface cannot expose internal packages: " + packageName);
+            }
+            ModuleInfo owner = ownerOf(packageName, modulesByPackage.values().stream()
+                    .sorted(Comparator.comparingInt((ModuleInfo info) -> info.packageName().length()).reversed())
+                    .toList());
+            if (owner == null) error(pkg, "Named API package is not owned by a module: " + packageName);
+            else exportedApis.computeIfAbsent(owner.id(), ignored -> new HashSet<>()).add(value);
         }
     }
 
@@ -144,8 +231,21 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                 }
                 if (targetId.isBlank()) {
                     error(module.element(), "Invalid dependency selector '" + raw + "'");
-                } else if (!modulesById.containsKey(targetId)) {
+                } else if (!modulesById.containsKey(targetId) &&
+                        !previousMetadata.containsKey(targetId)) {
                     error(module.element(), "Module '" + module.id() + "' depends on missing module '" + targetId + "'");
+                } else if (delimiter >= 0) {
+                    String selectedApi = raw.substring(delimiter + 2).trim();
+                    Set<String> discovered = exportedApis.get(targetId);
+                    // Incremental javac may process only a subset of package-info files
+                    // for a previously compiled module. Even a non-empty discovered set
+                    // can be incomplete, so check unknown names only on a clean build.
+                    if (!previousMetadata.containsKey(targetId) &&
+                            discovered != null && !discovered.isEmpty() &&
+                            !discovered.contains(selectedApi)) {
+                        error(module.element(), "Module '" + module.id() + "' depends on unknown named API '" +
+                                raw + "'. Available: " + discovered);
+                    }
                 }
             }
         }
@@ -239,13 +339,16 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         }
 
         ModuleApi api = targetType.getAnnotation(ModuleApi.class);
-        if (api == null) {
+        PackageElement targetPackageElement = processingEnv.getElementUtils().getPackageElement(targetPackage);
+        NamedInterface named = targetPackageElement == null ? null :
+                targetPackageElement.getAnnotation(NamedInterface.class);
+        if (api == null && named == null) {
             errorAt(path, "Cross-module reference to " + targetType.getQualifiedName()
                     + " is not allowed because it is not annotated with @ModuleApi");
             return;
         }
 
-        String apiName = api.value().trim();
+        String apiName = api != null ? api.value().trim() : named.value().trim();
         boolean allowed = sourceModule.dependencies().stream().anyMatch(raw -> {
             if (raw.equals(targetModule.id())) {
                 return true;
@@ -267,8 +370,26 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
         trees.printMessage(Diagnostic.Kind.ERROR, message, path.getLeaf(), path.getCompilationUnit());
     }
 
+    private void readPreviousMetadata(StandardLocation location) {
+        try {
+            FileObject file = processingEnv.getFiler().getResource(
+                    location, "", "META-INF/minecraft-modulith/modules.idx");
+            try (BufferedReader reader = new BufferedReader(file.openReader(true))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String[] columns = line.split("\\|", -1);
+                    if (columns.length == 4 && !columns[0].isBlank()) {
+                        previousMetadata.putIfAbsent(columns[0], line);
+                    }
+                }
+            }
+        } catch (IOException | IllegalArgumentException ignored) {
+            // Clean build or no previous module index on the classpath.
+        }
+    }
+
     private void writeMetadata() {
-        if (modulesById.isEmpty()) {
+        if (modulesById.isEmpty() && previousMetadata.isEmpty()) {
             return;
         }
         try {
@@ -288,6 +409,12 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
                     writer.write("|");
                     writer.write(Boolean.toString(info.configuration()));
                     writer.write(System.lineSeparator());
+                }
+                for (var entry : previousMetadata.entrySet()) {
+                    if (!modulesById.containsKey(entry.getKey())) {
+                        writer.write(entry.getValue());
+                        writer.write(System.lineSeparator());
+                    }
                 }
             }
         } catch (IOException exception) {
@@ -326,7 +453,7 @@ public final class ModuleArchitectureProcessor extends AbstractProcessor {
             String className,
             List<String> dependencies,
             boolean configuration,
-            TypeElement element
+            Element element
     ) {
     }
 }

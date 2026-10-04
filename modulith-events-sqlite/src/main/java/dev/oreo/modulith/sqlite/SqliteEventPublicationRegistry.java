@@ -60,6 +60,12 @@ public final class SqliteEventPublicationRegistry implements EventPublicationReg
                     CREATE INDEX IF NOT EXISTS idx_modulith_event_publication_status
                     ON modulith_event_publication(status)
                     """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS modulith_event_retry (
+                        publication_id TEXT PRIMARY KEY,
+                        retry_count INTEGER NOT NULL
+                    )
+                    """);
         } finally {
             lock.unlock();
         }
@@ -148,6 +154,131 @@ public final class SqliteEventPublicationRegistry implements EventPublicationReg
             }
         } catch (SQLException exception) {
             throw new ModulithException("Could not query incomplete event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public List<EventPublication> failed() {
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication WHERE status = ? ORDER BY published_at ASC
+                """)) {
+            statement.setString(1, EventPublicationStatus.FAILED.name());
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) publications.add(read(result));
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query failed event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void deadLetter(UUID publicationId, String reason) {
+        update(publicationId, EventPublicationStatus.DEAD_LETTER, reason);
+    }
+
+    @Override
+    public int retryCount(UUID publicationId) {
+        lock.lock();
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT retry_count FROM modulith_event_retry WHERE publication_id = ?")) {
+            query.setString(1, publicationId.toString());
+            try (ResultSet result = query.executeQuery()) {
+                return result.next() ? result.getInt(1) : 0;
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not read retry count", exception);
+        } finally { lock.unlock(); }
+    }
+
+    @Override
+    public int incrementRetryCount(UUID publicationId) {
+        lock.lock();
+        try {
+            try (PreparedStatement check = connection.prepareStatement(
+                    "SELECT status FROM modulith_event_publication WHERE id = ?")) {
+                check.setString(1, publicationId.toString());
+                try (ResultSet result = check.executeQuery()) {
+                    if (!result.next() || !EventPublicationStatus.FAILED.name().equals(result.getString(1))) {
+                        return 0;
+                    }
+                }
+            }
+            int updated;
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE modulith_event_retry SET retry_count = retry_count + 1 WHERE publication_id = ?")) {
+                statement.setString(1, publicationId.toString());
+                updated = statement.executeUpdate();
+            }
+            if (updated == 0) {
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO modulith_event_retry (publication_id, retry_count) VALUES (?, 1)")) {
+                    statement.setString(1, publicationId.toString());
+                    statement.executeUpdate();
+                }
+            }
+            return retryCount(publicationId);
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not increment retry count", exception);
+        } finally { lock.unlock(); }
+    }
+
+
+    @Override
+    public List<EventPublication> incomplete(int limit) {
+        return findByStatus(EventPublicationStatus.PENDING, limit);
+    }
+
+    @Override
+    public List<EventPublication> failed(int limit) {
+        return findByStatus(EventPublicationStatus.FAILED, limit);
+    }
+
+    private List<EventPublication> findByStatus(EventPublicationStatus status, int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (limit == 0) return List.of();
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication WHERE status = ?
+                ORDER BY published_at ASC LIMIT ?
+                """)) {
+            statement.setString(1, status.name());
+            statement.setInt(2, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                List<EventPublication> publications = new ArrayList<>();
+                while (result.next()) publications.add(read(result));
+                return List.copyOf(publications);
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not query limited event publications", exception);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public java.util.Optional<EventPublication> failed(UUID publicationId) {
+        Objects.requireNonNull(publicationId, "publicationId");
+        lock.lock();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, event_type, listener_id, payload, status, published_at, completed_at, error
+                FROM modulith_event_publication WHERE id = ? AND status = ?
+                """)) {
+            statement.setString(1, publicationId.toString());
+            statement.setString(2, EventPublicationStatus.FAILED.name());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? java.util.Optional.of(read(result)) : java.util.Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new ModulithException("Could not find failed event publication", exception);
         } finally {
             lock.unlock();
         }

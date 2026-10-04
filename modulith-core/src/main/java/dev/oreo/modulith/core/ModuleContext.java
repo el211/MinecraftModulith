@@ -6,6 +6,7 @@ import java.util.logging.Logger;
 
 /** Runtime facilities available to a module. */
 public final class ModuleContext {
+    private ModuleComponents components;
     private final String moduleId;
     private final ModuleServices services;
     private final EventBus events;
@@ -32,6 +33,11 @@ public final class ModuleContext {
         this.logger = logger;
     }
 
+    void setComponents(ModuleComponents components) { this.components = components; }
+
+    /** Access constructor-injected components owned by this module. */
+    public ModuleComponents components() { return Objects.requireNonNull(components, "components not initialized"); }
+
     public String moduleId() {
         return moduleId;
     }
@@ -50,6 +56,11 @@ public final class ModuleContext {
 
     public ModuleConfiguration config() {
         return configuration;
+    }
+
+    /** Reads a validated immutable record snapshot of this module's configuration. */
+    public <T extends Record> T config(Class<T> recordType) {
+        return TypedModuleConfiguration.read(configuration, recordType);
     }
 
     public Logger logger() {

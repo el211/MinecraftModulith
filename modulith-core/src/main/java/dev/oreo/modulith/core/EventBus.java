@@ -235,6 +235,90 @@ public final class EventBus {
         });
     }
 
+    /**
+     * Replays pending records without inserting duplicate publications. Call only after every
+     * module listener has registered. Delivery is at-least-once: listeners must be idempotent.
+     * This method must be run by one recovery worker at a time for a given registry.
+     */
+    public EventRecoveryReport replayIncomplete(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event recovery requires an EventPayloadCodec with deserialization");
+        }
+        return replay(registry.incomplete(limit), limit, codec);
+    }
+
+    /** Explicitly retry previously failed listener deliveries (at least once). */
+    public EventRecoveryReport replayFailed(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event retry requires an EventPayloadCodec");
+        }
+        return replay(registry.failed(limit), limit, codec);
+    }
+
+    /**
+     * Retries one exact failed publication without generating another record.
+     *
+     * @throws IllegalArgumentException if the ID is unknown or its publication is
+     *         no longer FAILED (e.g. already completed or moved to DEAD_LETTER)
+     */
+    public EventRecoveryReport replayFailedPublication(UUID publicationId) {
+        Objects.requireNonNull(publicationId, "publicationId");
+        EventPublication publication = registry.failed(publicationId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No FAILED event publication found for ID " + publicationId));
+        if (!(serializer instanceof EventPayloadCodec codec)) {
+            throw new ModulithException("Event retry requires an EventPayloadCodec");
+        }
+        return replay(List.of(publication), 1, codec);
+    }
+
+    /** Quarantines a permanently failing publication if supported by the persistence adapter. */
+    public void deadLetter(UUID publicationId, String reason) {
+        registry.deadLetter(publicationId, reason);
+    }
+
+    private EventRecoveryReport replay(
+            List<EventPublication> publications, int limit, EventPayloadCodec codec) {
+        int recovered = 0, failed = 0, unavailable = 0;
+        for (int i = 0; i < Math.min(limit, publications.size()); i++) {
+            EventPublication publication = publications.get(i);
+            var target = handlers.entrySet().stream()
+                    .filter(entry -> entry.getValue().stream()
+                            .anyMatch(handler -> handler.id().equals(publication.listenerId())))
+                    .findFirst().orElse(null);
+            if (target == null) { unavailable++; continue; }
+            Handler handler = target.getValue().stream()
+                    .filter(candidate -> candidate.id().equals(publication.listenerId()))
+                    .findFirst().orElseThrow();
+            try {
+                Object event = codec.deserialize(publication.eventType(), publication.payload(), target.getKey());
+                // Reuse the publication ID so replay never inserts a second pending record.
+                invokeExisting(handler, event, publication.id()).toCompletableFuture().join();
+                recovered++;
+            } catch (RuntimeException exception) {
+                failed++;
+            }
+        }
+        return new EventRecoveryReport(recovered, failed, unavailable);
+    }
+
+    private CompletionStage<Void> invokeExisting(Handler handler, Object event, UUID publicationId) {
+        CompletableFuture<Void> future;
+        if (handler.delivery() == EventDelivery.ASYNC) {
+            future = CompletableFuture.supplyAsync(() -> handler.invocation().invoke(event), executor)
+                    .thenCompose(stage -> stage).toCompletableFuture();
+        } else {
+            try { future = handler.invocation().invoke(event).toCompletableFuture(); }
+            catch (RuntimeException exception) { future = CompletableFuture.failedFuture(exception); }
+        }
+        return future.whenComplete((ignored, error) -> {
+            if (error == null) registry.complete(publicationId);
+            else registry.fail(publicationId, unwrap(error).toString());
+        });
+    }
+
     private List<Handler> matchingHandlers(Class<?> actualType) {
         List<Handler> matching = new ArrayList<>();
         handlers.forEach((registeredType, registeredHandlers) -> {
