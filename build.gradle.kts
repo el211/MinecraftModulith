@@ -24,12 +24,7 @@ subprojects {
             repositories {
                 maven {
                     name = "oreostudios"
-                    url = uri(
-                        if (version.toString().endsWith("-SNAPSHOT"))
-                            "https://maven.oreostudios.fr/snapshots"
-                        else
-                            "https://maven.oreostudios.fr/releases"
-                    )
+                    url = uri("https://maven.oreostudios.fr/oreostudioslib")
                     credentials {
                         username = providers.gradleProperty("oreostudiosUsername")
                             .orElse(providers.environmentVariable("MAVEN_USERNAME"))
@@ -44,7 +39,7 @@ subprojects {
     }
 
     extensions.configure<JavaPluginExtension> {
-        toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        // Compile with the running JDK targeting Java 21 bytecode (no separate toolchain needed).
         withSourcesJar()
         withJavadocJar()
     }
